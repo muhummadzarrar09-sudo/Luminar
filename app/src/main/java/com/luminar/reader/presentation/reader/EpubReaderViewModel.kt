@@ -22,9 +22,13 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+import com.luminar.reader.data.local.db.BookTocDao
+import com.luminar.reader.data.model.BookToc
+
 data class EpubReaderUiState(
     val book: Book? = null,
     val publication: Publication? = null,
+    val tocItems: List<BookToc> = emptyList(),
     val initialCfi: String? = null,
     val isLoading: Boolean = true,
     val showControls: Boolean = false,
@@ -38,6 +42,7 @@ data class EpubReaderUiState(
 class EpubReaderViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val bookRepository: BookRepository,
+    private val bookTocDao: BookTocDao,
     private val epubBookLoader: EpubBookLoader,
     private val saveProgressUseCase: SaveProgressUseCase,
     private val userPreferencesRepository: UserPreferencesRepository,
@@ -53,6 +58,7 @@ class EpubReaderViewModel @Inject constructor(
 
     init {
         observeBookAndPublication()
+        observeToc()
         observePreferences()
         observeReaderCommands()
         markBookOpened()
@@ -114,6 +120,14 @@ class EpubReaderViewModel @Inject constructor(
                         _uiState.update { it.copy(isLoading = false, error = "Book not found") }
                     }
                 }
+        }
+    }
+
+    private fun observeToc() {
+        viewModelScope.launch {
+            bookTocDao.getTocForBook(bookId).collect { items ->
+                _uiState.update { it.copy(tocItems = items) }
+            }
         }
     }
 

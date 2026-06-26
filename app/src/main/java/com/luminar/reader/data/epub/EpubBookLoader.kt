@@ -14,10 +14,16 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+data class EpubTocItem(
+    val title: String,
+    val href: String
+)
+
 data class EpubMetadata(
     val title: String?,
     val author: String?,
-    val coverPath: String?
+    val coverPath: String?,
+    val toc: List<EpubTocItem> = emptyList()
 )
 
 @Singleton
@@ -48,7 +54,11 @@ class EpubBookLoader @Inject constructor(
                 coverPath = coverFile.absolutePath
             }
 
-            EpubMetadata(title = title, author = author, coverPath = coverPath)
+            val toc = publication.tableOfContents.map { link ->
+                EpubTocItem(title = link.title ?: "Chapter", href = link.href)
+            }
+
+            EpubMetadata(title = title, author = author, coverPath = coverPath, toc = toc)
         } finally {
             publication.close()
         }

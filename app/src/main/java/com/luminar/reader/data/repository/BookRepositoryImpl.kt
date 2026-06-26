@@ -26,11 +26,14 @@ import kotlinx.coroutines.withContext
 import android.graphics.Color as AndroidColor
 
 import com.luminar.reader.data.epub.EpubBookLoader
+import com.luminar.reader.data.local.db.BookTocDao
+import com.luminar.reader.data.model.BookToc
 
 @Singleton
 class BookRepositoryImpl @Inject constructor(
     @ApplicationContext private val context: Context,
     private val bookDao: BookDao,
+    private val bookTocDao: BookTocDao,
     private val epubBookLoader: EpubBookLoader
 ) : BookRepository {
 
@@ -87,7 +90,23 @@ class BookRepositoryImpl @Inject constructor(
                 totalPages = 1
             )
 
-            bookDao.insertBook(book)
+            val bookId = bookDao.insertBook(book)
+
+            val tocEntities = metadata.toc.mapIndexed { idx, item ->
+                BookToc(
+                    bookId = bookId,
+                    title = item.title,
+                    pageNumber = null,
+                    epubHref = item.href,
+                    level = 0,
+                    sortOrder = idx
+                )
+            }
+            if (tocEntities.isNotEmpty()) {
+                bookTocDao.insertAll(tocEntities)
+            }
+
+            bookId
         } catch (cancellation: CancellationException) {
             destination.delete()
             throw cancellation

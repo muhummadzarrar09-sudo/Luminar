@@ -21,7 +21,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.material3.Button
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.rememberDrawerState
+import com.luminar.reader.presentation.components.TocDrawer
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -99,12 +102,24 @@ fun EpubReaderScreen(
     }
 
     val backgroundColor = uiState.currentTheme.readerBackgroundColor()
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(backgroundColor)
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            TocDrawer(
+                tocItems = uiState.tocItems,
+                onItemClick = { item ->
+                    item.epubHref?.let { /* Navigator go */ }
+                }
+            )
+        }
     ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(backgroundColor)
+        ) {
         when {
             uiState.isLoading -> {
                 CircularProgressIndicator(
@@ -146,6 +161,7 @@ fun EpubReaderScreen(
                     onInteraction = viewModel::onControlsInteraction
                 )
             }
+        }
         }
     }
 }

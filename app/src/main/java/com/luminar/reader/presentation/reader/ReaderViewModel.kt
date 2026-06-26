@@ -25,8 +25,12 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+import com.luminar.reader.data.local.db.BookTocDao
+import com.luminar.reader.data.model.BookToc
+
 data class ReaderUiState(
     val book: Book? = null,
+    val tocItems: List<BookToc> = emptyList(),
     val currentPage: Int = 0,
     val totalPages: Int = 0,
     val isLoading: Boolean = true,
@@ -49,6 +53,7 @@ sealed interface ReaderEvent {
 class ReaderViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val bookRepository: BookRepository,
+    private val bookTocDao: BookTocDao,
     private val saveProgressUseCase: SaveProgressUseCase,
     private val userPreferencesRepository: UserPreferencesRepository,
     private val readerInputController: ReaderInputController
@@ -68,6 +73,7 @@ class ReaderViewModel @Inject constructor(
 
     init {
         observeBook()
+        observeToc()
         observeInitialProgress()
         observePreferences()
         observePageChanges()
@@ -140,6 +146,14 @@ class ReaderViewModel @Inject constructor(
                         )
                     }
                 }
+        }
+    }
+
+    private fun observeToc() {
+        viewModelScope.launch {
+            bookTocDao.getTocForBook(bookId).collect { items ->
+                _uiState.update { it.copy(tocItems = items) }
+            }
         }
     }
 

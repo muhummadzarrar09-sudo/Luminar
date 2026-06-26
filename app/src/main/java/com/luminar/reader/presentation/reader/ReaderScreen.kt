@@ -26,7 +26,10 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.rememberDrawerState
+import com.luminar.reader.presentation.components.TocDrawer
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -147,12 +150,24 @@ fun ReaderScreen(
     val backgroundColor = uiState.currentTheme.readerBackgroundColor()
     val book = uiState.book
     val file = remember(book?.filePath) { book?.filePath?.let(::File) }
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(backgroundColor)
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            TocDrawer(
+                tocItems = uiState.tocItems,
+                onItemClick = { item ->
+                    item.pageNumber?.let { viewModel.onEvent(ReaderEvent.GoToPage(it)) }
+                }
+            )
+        }
     ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(backgroundColor)
+        ) {
         when {
             uiState.isLoading -> {
                 CircularProgressIndicator(
@@ -205,6 +220,7 @@ fun ReaderScreen(
                     onInteraction = viewModel::onControlsInteraction
                 )
             }
+        }
         }
     }
 }

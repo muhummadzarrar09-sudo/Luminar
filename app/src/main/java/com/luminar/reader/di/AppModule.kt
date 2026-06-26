@@ -15,6 +15,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 
+import com.luminar.reader.data.local.db.BookTocDao
+
 @Module
 @InstallIn(SingletonComponent::class)
 object DatabaseModule {
@@ -29,13 +31,17 @@ object DatabaseModule {
             AppDatabase::class.java,
             "luminar_reader.db"
         )
-        .addMigrations(AppDatabase.MIGRATION_1_2)
+        .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3)
         .build()
     }
 
     @Provides
     @Singleton
     fun provideBookDao(database: AppDatabase): BookDao = database.bookDao()
+
+    @Provides
+    @Singleton
+    fun provideBookTocDao(database: AppDatabase): BookTocDao = database.bookTocDao()
 }
 
 @Module
