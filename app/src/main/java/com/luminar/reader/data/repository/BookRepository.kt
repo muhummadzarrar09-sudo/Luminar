@@ -12,7 +12,8 @@ interface BookRepository {
     fun getAllProgress(): Flow<List<ReadingProgress>>
     fun getProgress(bookId: Long): Flow<ReadingProgress?>
     suspend fun importPdf(uri: Uri): Long
+    suspend fun importEpub(uri: Uri): Long
     suspend fun deleteBook(book: Book)
-    suspend fun saveProgress(bookId: Long, currentPage: Int, scrollOffset: Float = 0f)
+    suspend fun saveProgress(bookId: Long, currentPage: Int, scrollOffset: Float = 0f, epubCfi: String? = null)
     suspend fun markBookOpened(bookId: Long)
 }

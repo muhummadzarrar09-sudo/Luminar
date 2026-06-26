@@ -69,6 +69,10 @@ dependencies {
 
     implementation(libs.android.pdf.viewer)
 
+    implementation(libs.readium.shared)
+    implementation(libs.readium.streamer)
+    implementation(libs.readium.navigator)
+
     implementation(libs.room.runtime)
     implementation(libs.room.ktx)
     ksp(libs.room.compiler)

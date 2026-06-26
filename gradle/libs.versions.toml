@@ -16,6 +16,7 @@ hilt = "2.59.2"
 hilt-navigation-compose = "1.2.0"
 
 android-pdf-viewer = "3.2.0-beta.3"
+readium = "3.0.0"
 
 room = "2.8.4"
 
@@ -54,6 +55,10 @@ hilt-compiler = { group = "com.google.dagger", name = "hilt-android-compiler", v
 hilt-navigation-compose = { group = "androidx.hilt", name = "hilt-navigation-compose", version.ref = "hilt-navigation-compose" }
 
 android-pdf-viewer = { group = "com.github.mhiew", name = "android-pdf-viewer", version.ref = "android-pdf-viewer" }
+
+readium-shared = { group = "org.readium.kotlin-toolkit", name = "readium-shared", version.ref = "readium" }
+readium-streamer = { group = "org.readium.kotlin-toolkit", name = "readium-streamer", version.ref = "readium" }
+readium-navigator = { group = "org.readium.kotlin-toolkit", name = "readium-navigator", version.ref = "readium" }
 
 room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
 room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }

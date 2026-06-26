@@ -10,12 +10,14 @@ class SaveProgressUseCase @Inject constructor(
     suspend operator fun invoke(
         bookId: Long,
         currentPage: Int,
-        scrollOffset: Float = 0f
+        scrollOffset: Float = 0f,
+        epubCfi: String? = null
     ) {
         bookRepository.saveProgress(
             bookId = bookId,
             currentPage = currentPage,
-            scrollOffset = scrollOffset
+            scrollOffset = scrollOffset,
+            epubCfi = epubCfi
         )
     }
 }

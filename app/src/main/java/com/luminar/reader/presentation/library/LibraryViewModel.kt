@@ -35,8 +35,11 @@ sealed interface LibraryEvent {
     data class OpenBook(val book: Book) : LibraryEvent
 }
 
+import com.luminar.reader.data.model.BookFormat
+
 sealed interface LibraryEffect {
     data class NavigateToReader(val bookId: Long) : LibraryEffect
+    data class NavigateToEpubReader(val bookId: Long) : LibraryEffect
     data class ShowSnackbar(val message: String) : LibraryEffect
 }
 
@@ -133,7 +136,11 @@ class LibraryViewModel @Inject constructor(
     private fun openBook(book: Book) {
         viewModelScope.launch {
             if (File(book.filePath).exists()) {
-                _effects.emit(LibraryEffect.NavigateToReader(book.id))
+                if (book.format == BookFormat.EPUB) {
+                    _effects.emit(LibraryEffect.NavigateToEpubReader(book.id))
+                } else {
+                    _effects.emit(LibraryEffect.NavigateToReader(book.id))
+                }
             } else {
                 _effects.emit(
                     LibraryEffect.ShowSnackbar(

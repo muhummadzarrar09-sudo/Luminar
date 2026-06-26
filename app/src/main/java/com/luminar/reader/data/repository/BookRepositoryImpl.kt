@@ -25,10 +25,13 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 import android.graphics.Color as AndroidColor
 
+import com.luminar.reader.data.epub.EpubBookLoader
+
 @Singleton
 class BookRepositoryImpl @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val bookDao: BookDao
+    private val bookDao: BookDao,
+    private val epubBookLoader: EpubBookLoader
 ) : BookRepository {
 
     override fun getAllBooks(): Flow<List<Book>> = bookDao.getAllBooks()
@@ -68,6 +71,35 @@ class BookRepositoryImpl @Inject constructor(
         }
     }
 
+    override suspend fun importEpub(uri: Uri): Long = withContext(Dispatchers.IO) {
+        val displayName = resolveDisplayName(uri)
+        val destination = createEpubDestinationFile()
+
+        try {
+            copyUriToInternalFile(uri, destination)
+            val metadata = epubBookLoader.loadMetadata(destination)
+
+            val book = Book(
+                title = metadata.title ?: displayName.toBookTitle(),
+                filePath = destination.absolutePath,
+                coverPath = metadata.coverPath,
+                format = BookFormat.EPUB,
+                totalPages = 1
+            )
+
+            bookDao.insertBook(book)
+        } catch (cancellation: CancellationException) {
+            destination.delete()
+            throw cancellation
+        } catch (throwable: Throwable) {
+            destination.delete()
+            throw BookImportException(
+                message = "Unable to import EPUB: ${throwable.message ?: "Unknown error"}",
+                cause = throwable
+            )
+        }
+    }
+
     override suspend fun deleteBook(book: Book) {
         withContext(Dispatchers.IO) {
             bookDao.deleteBook(book)
@@ -79,14 +111,16 @@ class BookRepositoryImpl @Inject constructor(
     override suspend fun saveProgress(
         bookId: Long,
         currentPage: Int,
-        scrollOffset: Float
+        scrollOffset: Float,
+        epubCfi: String?
     ) {
         bookDao.upsertProgress(
             ReadingProgress(
                 bookId = bookId,
                 currentPage = currentPage.coerceAtLeast(0),
                 scrollOffset = scrollOffset,
-                lastReadAt = System.currentTimeMillis()
+                lastReadAt = System.currentTimeMillis(),
+                epubCfi = epubCfi
             )
         )
     }
@@ -131,6 +165,11 @@ class BookRepositoryImpl @Inject constructor(
     private fun createPdfDestinationFile(): File {
         val booksDirectory = File(context.filesDir, BOOKS_DIRECTORY).apply { mkdirs() }
         return File(booksDirectory, "${UUID.randomUUID()}.pdf")
+    }
+
+    private fun createEpubDestinationFile(): File {
+        val booksDirectory = File(context.filesDir, BOOKS_DIRECTORY).apply { mkdirs() }
+        return File(booksDirectory, "${UUID.randomUUID()}.epub")
     }
 
     private fun createCoverDestinationFile(): File {

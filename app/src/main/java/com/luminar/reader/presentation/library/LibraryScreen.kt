@@ -72,6 +72,7 @@ import java.io.File
 @Composable
 fun LibraryScreen(
     onOpenBook: (Long) -> Unit,
+    onOpenEpubBook: (Long) -> Unit,
     onOpenSettings: () -> Unit,
     viewModel: LibraryViewModel = hiltViewModel()
 ) {
@@ -79,7 +80,13 @@ fun LibraryScreen(
     val snackbarHostState = remember { SnackbarHostState() }
 
     val pdfPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent(),
+        contract = object : ActivityResultContracts.GetContent() {
+            override fun createIntent(context: android.content.Context, input: String): android.content.Intent {
+                return super.createIntent(context, "*/*").apply {
+                    putExtra(android.content.Intent.EXTRA_MIME_TYPES, input.split(",").toTypedArray())
+                }
+            }
+        },
         onResult = { uri: Uri? ->
             uri?.let { viewModel.onEvent(LibraryEvent.ImportPdf(it)) }
         }
@@ -91,6 +98,7 @@ fun LibraryScreen(
         viewModel.effects.collect { effect ->
             when (effect) {
                 is LibraryEffect.NavigateToReader -> onOpenBook(effect.bookId)
+                is LibraryEffect.NavigateToEpubReader -> onOpenEpubBook(effect.bookId)
                 is LibraryEffect.ShowSnackbar -> snackbarHostState.showSnackbar(effect.message)
             }
         }
@@ -153,7 +161,7 @@ fun LibraryScreen(
         },
         floatingActionButton = {
             FloatingActionButton(
-                onClick = { pdfPickerLauncher.launch("application/pdf") },
+                onClick = { pdfPickerLauncher.launch("application/pdf,application/epub+zip") },
                 containerColor = LuminarGold,
                 contentColor = Color(0xFF171100)
             ) {
@@ -180,7 +188,7 @@ fun LibraryScreen(
 
                 uiState.books.isEmpty() -> {
                     EmptyLibraryState(
-                        onImportClick = { pdfPickerLauncher.launch("application/pdf") }
+                        onImportClick = { pdfPickerLauncher.launch("application/pdf,application/epub+zip") }
                     )
                 }
 
