@@ -64,11 +64,7 @@ import coil.compose.AsyncImage
 import com.luminar.reader.R
 import com.luminar.reader.data.model.Book
 import com.luminar.reader.data.model.ReadingProgress
-import com.luminar.reader.presentation.theme.LuminarAmoledBlack
 import com.luminar.reader.presentation.theme.LuminarGold
-import com.luminar.reader.presentation.theme.LuminarSurface
-import com.luminar.reader.presentation.theme.LuminarTextPrimary
-import com.luminar.reader.presentation.theme.LuminarTextSecondary
 import com.luminar.reader.presentation.theme.LuminarTitleFont
 import java.io.File
 
@@ -116,7 +112,7 @@ fun LibraryScreen(
     }
 
     Scaffold(
-        containerColor = LuminarAmoledBlack,
+        containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
             TopAppBar(
@@ -126,7 +122,7 @@ fun LibraryScreen(
                         fontFamily = LuminarTitleFont,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 30.sp,
-                        color = LuminarTextPrimary
+                        color = MaterialTheme.colorScheme.onBackground
                     )
                 },
                 actions = {
@@ -144,14 +140,14 @@ fun LibraryScreen(
                         Icon(
                             painter = painterResource(R.drawable.ic_settings_24),
                             contentDescription = "Settings",
-                            tint = LuminarTextPrimary
+                            tint = MaterialTheme.colorScheme.onBackground
                         )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = LuminarAmoledBlack,
-                    titleContentColor = LuminarTextPrimary,
-                    actionIconContentColor = LuminarTextPrimary
+                    containerColor = MaterialTheme.colorScheme.background,
+                    titleContentColor = MaterialTheme.colorScheme.onBackground,
+                    actionIconContentColor = MaterialTheme.colorScheme.onBackground
                 )
             )
         },
@@ -172,7 +168,7 @@ fun LibraryScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .background(LuminarAmoledBlack)
+                .background(MaterialTheme.colorScheme.background)
         ) {
             when {
                 uiState.isLoading -> {
@@ -258,7 +254,7 @@ private fun BookCard(
                 onLongClick = onLongClick
             ),
         shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = LuminarSurface),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Column {
@@ -290,7 +286,7 @@ private fun BookCard(
                     .fillMaxWidth()
                     .height(48.dp)
                     .padding(horizontal = 10.dp, vertical = 8.dp),
-                color = LuminarTextPrimary,
+                color = MaterialTheme.colorScheme.onSurface,
                 style = MaterialTheme.typography.bodyMedium,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
@@ -345,7 +341,7 @@ private fun MissingFileOverlay(
         ) {
             Text(
                 text = "File not found",
-                color = LuminarTextPrimary,
+                color = MaterialTheme.colorScheme.onBackground,
                 style = MaterialTheme.typography.labelLarge
             )
             TextButton(onClick = onRemove) {
@@ -397,7 +393,7 @@ private fun EmptyLibraryState(
 
         Text(
             text = "Add your first book",
-            color = LuminarTextPrimary,
+            color = MaterialTheme.colorScheme.onBackground,
             style = MaterialTheme.typography.titleMedium
         )
 
@@ -405,7 +401,7 @@ private fun EmptyLibraryState(
 
         Text(
             text = "Import a PDF and begin reading in Luminar.",
-            color = LuminarTextSecondary,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodyMedium
         )
 

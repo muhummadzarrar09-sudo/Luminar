@@ -1,0 +1,52 @@
+<!-- app/src/main/res/drawable/ic_launcher_foreground.xml -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Left page -->
+    <path
+        android:fillColor="#E8C96A"
+        android:pathData="M54,34 L54,78 L28,74 L28,30 Z" />
+
+    <!-- Right page -->
+    <path
+        android:fillColor="#E8C96A"
+        android:pathData="M54,34 L54,78 L80,74 L80,30 Z" />
+
+    <!-- Spine line -->
+    <path
+        android:strokeColor="#0D0F14"
+        android:strokeWidth="1.5"
+        android:pathData="M54,33 L54,79" />
+
+    <!-- Left page inner line (page detail) -->
+    <path
+        android:strokeColor="#C4A94E"
+        android:strokeWidth="0.8"
+        android:pathData="M35,38 L50,40" />
+    <path
+        android:strokeColor="#C4A94E"
+        android:strokeWidth="0.8"
+        android:pathData="M35,44 L50,46" />
+    <path
+        android:strokeColor="#C4A94E"
+        android:strokeWidth="0.8"
+        android:pathData="M35,50 L50,52" />
+
+    <!-- Right page inner line (page detail) -->
+    <path
+        android:strokeColor="#C4A94E"
+        android:strokeWidth="0.8"
+        android:pathData="M58,40 L73,38" />
+    <path
+        android:strokeColor="#C4A94E"
+        android:strokeWidth="0.8"
+        android:pathData="M58,46 L73,44" />
+    <path
+        android:strokeColor="#C4A94E"
+        android:strokeWidth="0.8"
+        android:pathData="M58,52 L73,50" />
+
+</vector>

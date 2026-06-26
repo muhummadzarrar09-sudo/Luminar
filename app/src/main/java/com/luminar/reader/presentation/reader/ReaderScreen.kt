@@ -104,6 +104,8 @@ fun ReaderScreen(
 
         onDispose {
             controller?.show(WindowInsetsCompat.Type.systemBars())
+            controller?.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
         }
     }
 
