@@ -1,0 +1,99 @@
+# ---------------------------------------------------------------------------
+# Gradle
+# ---------------------------------------------------------------------------
+.gradle/
+build/
+**/build/
+gradle-app.setting
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/**/build/
+.gradletasknamecache
+
+# ---------------------------------------------------------------------------
+# Android build outputs
+# ---------------------------------------------------------------------------
+*.apk
+*.aab
+*.ap_
+*.aar
+*.dex
+*.class
+bin/
+gen/
+out/
+release/
+captures/
+.externalNativeBuild/
+.cxx/
+app/build/
+app/release/
+
+# ---------------------------------------------------------------------------
+# Local configuration / secrets (machine-specific — never commit)
+# ---------------------------------------------------------------------------
+local.properties
+keystore.properties
+*.jks
+*.keystore
+secrets.properties
+google-services.json
+
+# ---------------------------------------------------------------------------
+# Kotlin
+# ---------------------------------------------------------------------------
+.kotlin/
+
+# ---------------------------------------------------------------------------
+# IntelliJ IDEA / Android Studio
+# ---------------------------------------------------------------------------
+*.iml
+.idea/
+.idea/workspace.xml
+.idea/tasks.xml
+.idea/gradle.xml
+.idea/assetWizardSettings.xml
+.idea/dictionaries
+.idea/libraries
+.idea/caches
+.idea/modules.xml
+.idea/navEditor.xml
+.idea/deploymentTargetDropDown.xml
+.navigation/
+misc.xml
+*.ipr
+*.iws
+
+# ---------------------------------------------------------------------------
+# Eclipse
+# ---------------------------------------------------------------------------
+.classpath
+.project
+.settings/
+.metadata/
+
+# ---------------------------------------------------------------------------
+# Logs / profiling / crash reports
+# ---------------------------------------------------------------------------
+*.log
+hs_err_pid*
+replay_pid*
+
+# ---------------------------------------------------------------------------
+# OS-generated files
+# ---------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ---------------------------------------------------------------------------
+# Editor backups / temp
+# ---------------------------------------------------------------------------
+*~
+*.swp
+*.bak
+*.tmp

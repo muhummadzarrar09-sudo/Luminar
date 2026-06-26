@@ -1,0 +1,11 @@
+<!-- app/src/main/res/values/styles.xml -->
+<resources>
+    <style name="Theme.Luminar" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">serif</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:colorAccent">#E8C96A</item>
+    </style>
+</resources>

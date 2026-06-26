@@ -1,0 +1,10 @@
+<!-- app/src/main/res/drawable/ic_auto_stories_48.xml -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M43,8.5V35.5C43,36.88 41.88,38 40.5,38H30.2C27.58,38 25.34,39.08 24,40.88C22.66,39.08 20.42,38 17.8,38H7.5C6.12,38 5,36.88 5,35.5V8.5C5,7.12 6.12,6 7.5,6H17.8C20.42,6 22.66,7.08 24,8.88C25.34,7.08 27.58,6 30.2,6H40.5C41.88,6 43,7.12 43,8.5ZM21.5,11.9C20.63,10.76 19.32,10 17.8,10H9V34H17.8C19.14,34 20.4,34.28 21.5,34.8V11.9ZM39,10H30.2C28.68,10 27.37,10.76 26.5,11.9V34.8C27.6,34.28 28.86,34 30.2,34H39V10ZM12,15H18.5V18H12V15ZM12,21H18.5V24H12V21ZM29.5,15H36V18H29.5V15ZM29.5,21H36V24H29.5V21Z" />
+</vector>
