@@ -153,6 +153,30 @@ fun LibraryScreen(
                         )
                     }
 
+                    var showStatsStub by remember { mutableStateOf(false) }
+                    if (showStatsStub) {
+                        androidx.compose.material3.ModalBottomSheet(
+                            onDismissRequest = { showStatsStub = false },
+                            containerColor = MaterialTheme.colorScheme.surface
+                        ) {
+                            Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("Reading Stats Summary", style = MaterialTheme.typography.titleLarge, color = LuminarGold)
+                                Text("Current book: ${uiState.todayMinutesByBookId.values.sum()} min today", color = MaterialTheme.colorScheme.onSurface)
+                                Text("This week: Active sessions tracked", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("All time: ${uiState.books.size} books loaded", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Spacer(Modifier.height(16.dp))
+                            }
+                        }
+                    }
+
+                    IconButton(onClick = { showStatsStub = true }) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_auto_stories_48),
+                            contentDescription = "Stats",
+                            tint = MaterialTheme.colorScheme.onBackground
+                        )
+                    }
+
                     IconButton(onClick = onOpenSettings) {
                         Icon(
                             painter = painterResource(R.drawable.ic_settings_24),
@@ -241,6 +265,7 @@ private fun LibraryGrid(
             BookCard(
                 book = book,
                 progress = uiState.progressByBookId[book.id].progressFraction(book.totalPages),
+                todayMinutes = uiState.todayMinutesByBookId[book.id] ?: 0,
                 onClick = { onBookClick(book) },
                 onLongClick = { onBookLongClick(book) },
                 onRemoveMissingBook = { onRemoveMissingBook(book) }
@@ -254,6 +279,7 @@ private fun LibraryGrid(
 private fun BookCard(
     book: Book,
     progress: Float,
+    todayMinutes: Int,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onRemoveMissingBook: () -> Unit
@@ -310,6 +336,14 @@ private fun BookCard(
             )
 
             ProgressStrip(progress = progress)
+            if (todayMinutes > 0) {
+                Text(
+                    text = "$todayMinutes min today",
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    color = LuminarGold,
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
         }
     }
 }

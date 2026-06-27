@@ -21,9 +21,12 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+import com.luminar.reader.data.local.db.ReadingSessionDao
+
 data class LibraryUiState(
     val books: List<Book> = emptyList(),
     val progressByBookId: Map<Long, ReadingProgress> = emptyMap(),
+    val todayMinutesByBookId: Map<Long, Int> = emptyMap(),
     val isLoading: Boolean = true,
     val isImporting: Boolean = false,
     val error: String? = null
@@ -47,7 +50,8 @@ sealed interface LibraryEffect {
 class LibraryViewModel @Inject constructor(
     private val getBooksUseCase: GetBooksUseCase,
     private val importBookUseCase: ImportBookUseCase,
-    private val bookRepository: BookRepository
+    private val bookRepository: BookRepository,
+    private val readingSessionDao: ReadingSessionDao
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(LibraryUiState())
@@ -72,9 +76,10 @@ class LibraryViewModel @Inject constructor(
         viewModelScope.launch {
             combine(
                 getBooksUseCase(),
-                bookRepository.getAllProgress()
-            ) { books, progress ->
-                books to progress.associateBy { it.bookId }
+                bookRepository.getAllProgress(),
+                readingSessionDao.getAllBooksTodayMinutes()
+            ) { books, progress, minutes ->
+                Triple(books, progress.associateBy { it.bookId }, minutes.associate { it.bookId to it.minutes })
             }
                 .catch { throwable ->
                     _uiState.update {
@@ -84,11 +89,12 @@ class LibraryViewModel @Inject constructor(
                         )
                     }
                 }
-                .collect { (books, progressByBookId) ->
+                .collect { (books, progressByBookId, minsByBookId) ->
                     _uiState.update {
                         it.copy(
                             books = books,
                             progressByBookId = progressByBookId,
+                            todayMinutesByBookId = minsByBookId,
                             isLoading = false,
                             error = null
                         )

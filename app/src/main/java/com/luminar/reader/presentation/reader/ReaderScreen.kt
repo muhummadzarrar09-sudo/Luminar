@@ -135,8 +135,11 @@ fun ReaderScreen(
     DisposableEffect(lifecycleOwner.lifecycle) {
         val lifecycle = lifecycleOwner.lifecycle
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) {
+            if (event == Lifecycle.Event.ON_START) {
+                viewModel.startSession()
+            } else if (event == Lifecycle.Event.ON_STOP) {
                 viewModel.saveCurrentProgressImmediately()
+                viewModel.endSession()
             }
         }
 
@@ -466,17 +469,26 @@ private fun ReaderBottomControls(
                 .padding(horizontal = 18.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            TextButton(
-                onClick = {
-                    onInteraction()
-                    showPageJumpDialog = true
-                },
-                colors = ButtonDefaults.textButtonColors(contentColor = contentColor)
-            ) {
-                Text(
-                    text = "${(uiState.currentPage + 1).coerceAtMost(uiState.totalPages.coerceAtLeast(1))} / ${uiState.totalPages.coerceAtLeast(1)}",
-                    style = MaterialTheme.typography.labelLarge
-                )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                TextButton(
+                    onClick = {
+                        onInteraction()
+                        showPageJumpDialog = true
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = contentColor)
+                ) {
+                    Text(
+                        text = "${(uiState.currentPage + 1).coerceAtMost(uiState.totalPages.coerceAtLeast(1))} / ${uiState.totalPages.coerceAtLeast(1)}",
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                }
+                if (uiState.todayMinutes > 0) {
+                    Text(
+                        text = "${uiState.todayMinutes} min today",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = LuminarGold
+                    )
+                }
             }
 
             Slider(

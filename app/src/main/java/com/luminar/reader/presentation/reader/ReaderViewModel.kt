@@ -28,12 +28,16 @@ import kotlinx.coroutines.launch
 import com.luminar.reader.data.local.db.BookTocDao
 import com.luminar.reader.data.model.BookToc
 
+import com.luminar.reader.data.local.db.ReadingSessionDao
+import com.luminar.reader.data.model.ReadingSession
+
 data class ReaderUiState(
     val book: Book? = null,
     val tocItems: List<BookToc> = emptyList(),
     val currentPage: Int = 0,
     val totalPages: Int = 0,
     val savedZoom: Float = 1.0f,
+    val todayMinutes: Int = 0,
     val isLoading: Boolean = true,
     val showControls: Boolean = false,
     val currentTheme: AppTheme = AppTheme.DARK_AMOLED,
@@ -55,6 +59,7 @@ class ReaderViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val bookRepository: BookRepository,
     private val bookTocDao: BookTocDao,
+    private val readingSessionDao: ReadingSessionDao,
     private val saveProgressUseCase: SaveProgressUseCase,
     private val userPreferencesRepository: UserPreferencesRepository,
     private val readerInputController: ReaderInputController
@@ -75,16 +80,37 @@ class ReaderViewModel @Inject constructor(
     private var controlsAutoHideJob: Job? = null
     private var lastPersistedPage: Int = 0
     private var lastPersistedZoom: Float = 1.0f
+    private var activeSessionId: Long? = null
+    private var startPage: Int = 0
 
     init {
         observeBook()
         observeToc()
         observeInitialProgress()
+        observeTodayMinutes()
         observePreferences()
         observePageChanges()
         observeZoomChanges()
         observeReaderCommands()
         markBookOpened()
+    }
+
+    fun startSession() {
+        if (activeSessionId != null) return
+        viewModelScope.launch {
+            startPage = _uiState.value.currentPage
+            val session = ReadingSession(bookId = bookId, startedAt = System.currentTimeMillis(), endedAt = null, pagesRead = 0)
+            activeSessionId = readingSessionDao.startSession(session)
+        }
+    }
+
+    fun endSession() {
+        val sId = activeSessionId ?: return
+        viewModelScope.launch {
+            val delta = abs(_uiState.value.currentPage - startPage)
+            readingSessionDao.endSession(sId, System.currentTimeMillis(), delta)
+            activeSessionId = null
+        }
     }
 
     fun onEvent(event: ReaderEvent) {
@@ -164,6 +190,14 @@ class ReaderViewModel @Inject constructor(
         viewModelScope.launch {
             bookTocDao.getTocForBook(bookId).collect { items ->
                 _uiState.update { it.copy(tocItems = items) }
+            }
+        }
+    }
+
+    private fun observeTodayMinutes() {
+        viewModelScope.launch {
+            readingSessionDao.getTodayMinutes(bookId).collect { mins ->
+                _uiState.update { it.copy(todayMinutes = mins) }
             }
         }
     }
