@@ -159,6 +159,7 @@ fun EpubReaderScreen(
                     onNavigateBack = currentOnNavigateBack,
                     onToggleTheme = { viewModel.onEvent(ReaderEvent.ThemeChanged(uiState.currentTheme.next())) },
                     onFontScaleChange = viewModel::onFontScaleChanged,
+                    onToggleBookmark = viewModel::toggleBookmark,
                     onInteraction = viewModel::onControlsInteraction
                 )
             }
@@ -190,6 +191,7 @@ private fun EpubControlsOverlay(
     onNavigateBack: () -> Unit,
     onToggleTheme: () -> Unit,
     onFontScaleChange: (Float) -> Unit,
+    onToggleBookmark: () -> Unit,
     onInteraction: () -> Unit
 ) {
     AnimatedVisibility(
@@ -232,6 +234,13 @@ private fun EpubControlsOverlay(
                     }
                     IconButton(onClick = { onInteraction(); showPanel = true }) {
                         Icon(painter = painterResource(R.drawable.ic_auto_stories_48), contentDescription = "Highlights", tint = LuminarGold)
+                    }
+                    IconButton(onClick = { onInteraction(); onToggleBookmark() }) {
+                        Icon(
+                            painter = painterResource(if (uiState.isBookmarked) R.drawable.ic_auto_stories_48 else R.drawable.ic_add_24),
+                            contentDescription = "Bookmark",
+                            tint = if (uiState.isBookmarked) LuminarGold else contentColor
+                        )
                     }
                     TextButton(onClick = { onInteraction(); onToggleTheme() }, colors = ButtonDefaults.textButtonColors(contentColor = LuminarGold)) {
                         Icon(painter = painterResource(R.drawable.ic_palette_24), contentDescription = null, tint = LuminarGold)

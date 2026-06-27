@@ -417,6 +417,14 @@ private fun ReaderTopControls(
                 Icon(painter = painterResource(R.drawable.ic_auto_stories_48), contentDescription = "Highlights", tint = LuminarGold)
             }
 
+            IconButton(onClick = { onInteraction(); viewModel.toggleBookmark() }) {
+                Icon(
+                    painter = painterResource(if (uiState.isBookmarked) R.drawable.ic_auto_stories_48 else R.drawable.ic_add_24),
+                    contentDescription = "Bookmark",
+                    tint = if (uiState.isBookmarked) LuminarGold else contentColor
+                )
+            }
+
             TextButton(
                 onClick = {
                     onInteraction()

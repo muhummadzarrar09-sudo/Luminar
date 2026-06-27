@@ -15,6 +15,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 
+import com.luminar.reader.data.local.db.BookmarkDao
 import com.luminar.reader.data.local.db.BookTocDao
 import com.luminar.reader.data.local.db.HighlightDao
 import com.luminar.reader.data.local.db.PageContentDao
@@ -40,7 +41,8 @@ object DatabaseModule {
             AppDatabase.MIGRATION_3_4,
             AppDatabase.MIGRATION_4_5,
             AppDatabase.MIGRATION_5_6,
-            AppDatabase.MIGRATION_6_7
+            AppDatabase.MIGRATION_6_7,
+            AppDatabase.MIGRATION_7_8
         )
         .build()
     }
@@ -64,6 +66,10 @@ object DatabaseModule {
     @Provides
     @Singleton
     fun provideHighlightDao(database: AppDatabase): HighlightDao = database.highlightDao()
+
+    @Provides
+    @Singleton
+    fun provideBookmarkDao(database: AppDatabase): BookmarkDao = database.bookmarkDao()
 }
 
 @Module

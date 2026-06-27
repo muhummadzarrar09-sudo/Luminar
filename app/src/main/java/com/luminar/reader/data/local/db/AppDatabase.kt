@@ -11,6 +11,7 @@ import com.luminar.reader.data.model.BookInsight
 import com.luminar.reader.data.model.BookToc
 import com.luminar.reader.data.model.PageContent
 import com.luminar.reader.data.model.PageTextFts
+import com.luminar.reader.data.model.Bookmark
 import com.luminar.reader.data.model.Highlight
 import com.luminar.reader.data.model.ReadingProgress
 import com.luminar.reader.data.model.ReadingSession
@@ -24,9 +25,10 @@ import com.luminar.reader.data.model.ReadingSession
         PageContent::class,
         PageTextFts::class,
         ReadingSession::class,
-        Highlight::class
+        Highlight::class,
+        Bookmark::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -36,6 +38,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun pageContentDao(): PageContentDao
     abstract fun readingSessionDao(): ReadingSessionDao
     abstract fun highlightDao(): HighlightDao
+    abstract fun bookmarkDao(): BookmarkDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -122,6 +125,24 @@ abstract class AppDatabase : RoomDatabase() {
                     )
                 """.trimIndent())
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_highlights_bookId` ON `highlights` (`bookId`)")
+            }
+        }
+
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `bookmarks` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `bookId` INTEGER NOT NULL,
+                        `format` TEXT NOT NULL,
+                        `pdfPage` INTEGER,
+                        `epubCfi` TEXT,
+                        `label` TEXT NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        FOREIGN KEY(`bookId`) REFERENCES `books`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_bookmarks_bookId` ON `bookmarks` (`bookId`)")
             }
         }
     }

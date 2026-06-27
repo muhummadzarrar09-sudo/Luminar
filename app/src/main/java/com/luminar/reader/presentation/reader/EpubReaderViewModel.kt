@@ -25,8 +25,10 @@ import kotlinx.coroutines.launch
 import com.luminar.reader.data.local.db.BookTocDao
 import com.luminar.reader.data.model.BookToc
 
+import com.luminar.reader.data.local.db.BookmarkDao
 import com.luminar.reader.data.local.db.HighlightDao
 import com.luminar.reader.data.model.BookFormat
+import com.luminar.reader.data.model.Bookmark
 import com.luminar.reader.data.model.Highlight
 
 data class EpubReaderUiState(
@@ -34,6 +36,9 @@ data class EpubReaderUiState(
     val publication: Publication? = null,
     val tocItems: List<BookToc> = emptyList(),
     val highlights: List<Highlight> = emptyList(),
+    val bookmarks: List<Bookmark> = emptyList(),
+    val isBookmarked: Boolean = false,
+    val currentCfi: String = "",
     val initialCfi: String? = null,
     val fontScale: Float = 1.0f,
     val isLoading: Boolean = true,
@@ -50,6 +55,7 @@ class EpubReaderViewModel @Inject constructor(
     private val bookRepository: BookRepository,
     private val bookTocDao: BookTocDao,
     private val highlightDao: HighlightDao,
+    private val bookmarkDao: BookmarkDao,
     private val epubBookLoader: EpubBookLoader,
     private val saveProgressUseCase: SaveProgressUseCase,
     private val userPreferencesRepository: UserPreferencesRepository,
@@ -67,6 +73,8 @@ class EpubReaderViewModel @Inject constructor(
         observeBookAndPublication()
         observeToc()
         observeHighlights()
+        observeBookmarks()
+        observeCfiBookmark()
         observePreferences()
         observeReaderCommands()
         markBookOpened()
@@ -82,6 +90,7 @@ class EpubReaderViewModel @Inject constructor(
 
     fun onLocatorChanged(cfiString: String) {
         val book = _uiState.value.book ?: return
+        _uiState.update { it.copy(currentCfi = cfiString) }
         viewModelScope.launch {
             saveProgressUseCase(
                 bookId = book.id,
@@ -90,6 +99,45 @@ class EpubReaderViewModel @Inject constructor(
                 epubCfi = cfiString
             )
         }
+    }
+
+    private fun observeBookmarks() {
+        viewModelScope.launch {
+            bookmarkDao.getBookmarksForBook(bookId).collect { list ->
+                _uiState.update { it.copy(bookmarks = list) }
+            }
+        }
+    }
+
+    private fun observeCfiBookmark() {
+        viewModelScope.launch {
+            _uiState.collect { state ->
+                bookmarkDao.getBookmarkForCfi(bookId, state.currentCfi).collect { bm ->
+                    _uiState.update { it.copy(isBookmarked = bm != null) }
+                }
+            }
+        }
+    }
+
+    fun toggleBookmark() {
+        viewModelScope.launch {
+            val cfi = _uiState.value.currentCfi
+            val existing = bookmarkDao.getBookmarkForCfi(bookId, cfi).first()
+            if (existing != null) {
+                bookmarkDao.deleteBookmark(existing)
+            } else {
+                val b = Bookmark(bookId = bookId, format = BookFormat.EPUB, pdfPage = null, epubCfi = cfi, label = "Saved Place")
+                bookmarkDao.insertBookmark(b)
+            }
+        }
+    }
+
+    fun deleteBookmark(b: Bookmark) {
+        viewModelScope.launch { bookmarkDao.deleteBookmark(b) }
+    }
+
+    fun renameBookmark(b: Bookmark, newLabel: String) {
+        viewModelScope.launch { bookmarkDao.updateBookmark(b.copy(label = newLabel)) }
     }
 
     fun onFontScaleChanged(scale: Float) {

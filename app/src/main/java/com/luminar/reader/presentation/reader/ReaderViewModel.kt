@@ -31,14 +31,18 @@ import com.luminar.reader.data.model.BookToc
 import com.luminar.reader.data.local.db.ReadingSessionDao
 import com.luminar.reader.data.model.ReadingSession
 
+import com.luminar.reader.data.local.db.BookmarkDao
 import com.luminar.reader.data.local.db.HighlightDao
 import com.luminar.reader.data.model.BookFormat
+import com.luminar.reader.data.model.Bookmark
 import com.luminar.reader.data.model.Highlight
 
 data class ReaderUiState(
     val book: Book? = null,
     val tocItems: List<BookToc> = emptyList(),
     val highlights: List<Highlight> = emptyList(),
+    val bookmarks: List<Bookmark> = emptyList(),
+    val isBookmarked: Boolean = false,
     val currentPage: Int = 0,
     val totalPages: Int = 0,
     val savedZoom: Float = 1.0f,
@@ -65,6 +69,7 @@ class ReaderViewModel @Inject constructor(
     private val bookRepository: BookRepository,
     private val bookTocDao: BookTocDao,
     private val highlightDao: HighlightDao,
+    private val bookmarkDao: BookmarkDao,
     private val readingSessionDao: ReadingSessionDao,
     private val saveProgressUseCase: SaveProgressUseCase,
     private val userPreferencesRepository: UserPreferencesRepository,
@@ -93,6 +98,8 @@ class ReaderViewModel @Inject constructor(
         observeBook()
         observeToc()
         observeHighlights()
+        observeBookmarks()
+        observePageBookmark()
         observeInitialProgress()
         observeTodayMinutes()
         observePreferences()
@@ -199,6 +206,45 @@ class ReaderViewModel @Inject constructor(
                 _uiState.update { it.copy(tocItems = items) }
             }
         }
+    }
+
+    private fun observeBookmarks() {
+        viewModelScope.launch {
+            bookmarkDao.getBookmarksForBook(bookId).collect { list ->
+                _uiState.update { it.copy(bookmarks = list) }
+            }
+        }
+    }
+
+    private fun observePageBookmark() {
+        viewModelScope.launch {
+            _uiState.collect { state ->
+                bookmarkDao.getBookmarkForPage(bookId, state.currentPage).collect { bm ->
+                    _uiState.update { it.copy(isBookmarked = bm != null) }
+                }
+            }
+        }
+    }
+
+    fun toggleBookmark() {
+        viewModelScope.launch {
+            val curPage = _uiState.value.currentPage
+            val existing = bookmarkDao.getBookmarkForPage(bookId, curPage).first()
+            if (existing != null) {
+                bookmarkDao.deleteBookmark(existing)
+            } else {
+                val b = Bookmark(bookId = bookId, format = BookFormat.PDF, pdfPage = curPage, epubCfi = null, label = "Page ${curPage + 1}")
+                bookmarkDao.insertBookmark(b)
+            }
+        }
+    }
+
+    fun deleteBookmark(b: Bookmark) {
+        viewModelScope.launch { bookmarkDao.deleteBookmark(b) }
+    }
+
+    fun renameBookmark(b: Bookmark, newLabel: String) {
+        viewModelScope.launch { bookmarkDao.updateBookmark(b.copy(label = newLabel)) }
     }
 
     private fun observeHighlights() {
