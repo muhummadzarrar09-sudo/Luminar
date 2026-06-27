@@ -1,48 +1,79 @@
-# Luminar — Phase 2A Sprint Notes & Progress
+# Luminar — Phase 2A Final Release Notes & Documentation
 
 ## Executive Summary
-Phase 2A expands Luminar from a standalone PDF reader into a dual-format reading suite supporting both PDF (`application/pdf`) and reflowable EPUB (`application/epub+zip`) documents. Furthermore, it introduces universal document navigation via an interactive Table of Contents (TOC) sidebar drawer.
+Phase 2A successfully transformed Luminar Reader from a standalone PDF viewing tool into a comprehensive, dual-format reading platform supporting both PDF (`application/pdf`) and reflowable EPUB (`application/epub+zip`) documents. Furthermore, Phase 2A delivered complete table of contents navigation, asynchronous full-text search, zoom scale persistence, and active session reading analytics.
 
 ---
 
-## Completed Features
+## Complete Features Delivered
 
 ### Feature 1: EPUB Support via Readium2
-- **What Was Built**: 
-  - Dual-format file import pipeline accepting both PDFs and EPUBs via `ImportBookUseCase` and updated MIME type filters in `LibraryScreen`.
-  - `EpubBookLoader` singleton service utilizing Readium Streamer (`org.readium.r2.streamer.Streamer`) to parse `.epub` archives from internal storage, extract publication metadata (title, author), and render cover thumbnail images.
-  - Dedicated `EpubReaderScreen` and `EpubReaderViewModel` providing responsive reader overlays, theme switching (`DARK_AMOLED`, `SEPIA`, `LIGHT`), hardware volume button page turns, and screen keep-alive window flags.
-  - Reading progress location tracking via EPUB Canonical Fragment Identifiers (CFIs).
-- **Stack & Database Changes**:
-  - Added Readium Kotlin Toolkit `3.0.0` (`readium-shared`, `readium-streamer`, `readium-navigator`).
-  - **Room Migration v1 → v2**: Added nullable `epubCfi TEXT DEFAULT NULL` column to `reading_progress` table.
+- **What Was Built**: Dual-format file import pipeline handling PDFs and EPUBs via `ImportBookUseCase`. Integrated `EpubBookLoader` backed by Readium Streamer to parse EPUB archives, extract metadata, and render cover images. Created `EpubReaderScreen` and `EpubReaderViewModel` supporting AMOLED/Sepia/Light themes, hardware volume key navigation, keep-alive display flags, and CFI location persistence.
+- **Room Migration v1 → v2**: Added nullable `epubCfi TEXT DEFAULT NULL` column to `reading_progress`.
 
-### Feature 2: Table of Contents (TOC) Sidebar Drawer
-- **What Was Built**:
-  - Extracted document chapter outlines and bookmarks during import, mapping them into standardized relational database entities.
-  - Created `TocDrawer` modal component wrapped in Compose `ModalNavigationDrawer`. Triggered via left-to-right swipe gestures across both PDF and EPUB reader composables.
-  - Displays hierarchically indented chapter entries (`level * 16.dp`). Tapping an item instantly routes PDFView (`jumpTo()`) or Readium Navigator to the targeted location. Includes graceful empty states when documents contain no outline data.
-- **Stack & Database Changes**:
-  - **Room Migration v2 → v3**: Created `book_toc` table with foreign key cascading deletion bound to `books.id`.
+### Feature 2: TOC Sidebar Drawer
+- **What Was Built**: Extracted chapter outlines on import into `BookToc` entities. Implemented `TocDrawer` modal sheet wrapper triggered via left-edge horizontal swipe gestures across both PDF and EPUB screens. Hierarchical indentation (`level * 16.dp`) and instant target jumping.
+- **Room Migration v2 → v3**: Created `book_toc` relational table with cascading deletion on `books.id`.
 
 ### Feature 3: Background Text Indexing & Fast Search
-- **What Was Built**:
-  - Asynchronous document chunk text extraction and database indexing via WorkManager (`BookAnalysisWorker`). Automatically enqueued immediately after successful PDF or EPUB file import.
-  - Added `indexingProgress` field (`0-100`) to `Book` model to track extraction status.
-  - Built standalone `SearchScreen` and `SearchViewModel` supporting dual search modes ("This Book" scoped tab vs "All Books" global tab) with 300ms query debouncing.
-  - Implemented bold search keyword match highlighting inside excerpt previews (`buildHighlightedString()`).
-- **Stack & Database Changes**:
-  - **Room Migration v3 → v4**: Added `indexingProgress INTEGER NOT NULL DEFAULT 0` column to `books`. Created `page_content` table and `page_text_fts` virtual FTS4 table index.
+- **What Was Built**: Asynchronous document text chunking (500 chars) in `BookAnalysisWorker` enqueued on import. Added `indexingProgress` (0-100%) to `Book` model. Built `SearchScreen` and `SearchViewModel` supporting "This Book" and "All Books" tabs with 300ms query debouncing and bold keyword highlighting.
+- **Room Migration v3 → v4**: Added `indexingProgress INTEGER NOT NULL DEFAULT 0` to `books`. Created `page_content` content table and `page_text_fts` virtual table using SQLite FTS4.
 
 ### Feature 4: Zoom Memory Tracking
-- **What Was Built**:
-  - Restores saved PDF document zoom scaling (`pdfView.zoomTo()`) after a 100ms render stabilization delay.
-  - Automatically records user zoom scale changes with a 500ms debounce buffer in `ReaderViewModel`.
-  - Added global font size scaling slider (`0.5x to 2.0x`) inside `EpubReaderScreen` bottom controls overlay backed by asynchronous DataStore preferences.
-- **Stack & Database Changes**:
-  - **Room Migration v4 → v5**: Added `lastZoomLevel REAL NOT NULL DEFAULT 1.0` column to `reading_progress`. Added `fontScale` float key to DataStore preferences.
+- **What Was Built**: Automatic restoration of PDF zoom scaling (`pdfView.zoomTo()`) after a 100ms render stabilization window. Debounced zoom persistence (500ms). Global EPUB font size scaling slider (`50% to 200%`) stored in DataStore preferences.
+- **Room Migration v4 → v5**: Added `lastZoomLevel REAL NOT NULL DEFAULT 1.0` column to `reading_progress`.
+
+### Feature 5: Reading Timer & Session Analytics
+- **What Was Built**: Active reading session tracking via `ReadingSession` entities. Hooks into reader `LifecycleEventObserver` (`ON_START` → start session, `ON_STOP` → end session recording elapsed delta). Library book cards display `"X min today"`. Reader bottom bar displays today's reading minutes. TopAppBar stats icon opens summary `ModalBottomSheet`.
+- **Room Migration v5 → v6**: Created `reading_sessions` table with cascading foreign key to `books.id`.
 
 ---
 
-## Remaining Features in Phase 2A Sprint
-- **Feature 5**: Active Reading Timer and Session Tracking (`ReadingSession` entity).
+## Files Created & Modified
+
+### Created Files
+- `app/src/main/java/com/luminar/reader/data/epub/EpubBookLoader.kt`
+- `app/src/main/java/com/luminar/reader/presentation/reader/EpubReaderScreen.kt`
+- `app/src/main/java/com/luminar/reader/presentation/reader/EpubReaderViewModel.kt`
+- `app/src/main/java/com/luminar/reader/data/model/BookToc.kt`
+- `app/src/main/java/com/luminar/reader/data/local/db/BookTocDao.kt`
+- `app/src/main/java/com/luminar/reader/presentation/components/TocDrawer.kt`
+- `app/src/main/java/com/luminar/reader/data/model/PageContent.kt`
+- `app/src/main/java/com/luminar/reader/data/model/PageTextFts.kt`
+- `app/src/main/java/com/luminar/reader/data/model/SearchResult.kt`
+- `app/src/main/java/com/luminar/reader/data/local/db/PageContentDao.kt`
+- `app/src/main/java/com/luminar/reader/presentation/search/SearchScreen.kt`
+- `app/src/main/java/com/luminar/reader/presentation/search/SearchViewModel.kt`
+- `app/src/main/java/com/luminar/reader/data/model/ReadingSession.kt`
+- `app/src/main/java/com/luminar/reader/data/local/db/ReadingSessionDao.kt`
+
+### Modified Files
+- `gradle/libs.versions.toml`
+- `app/build.gradle.kts`
+- `app/src/main/java/com/luminar/reader/data/model/Book.kt`
+- `app/src/main/java/com/luminar/reader/data/model/ReadingProgress.kt`
+- `app/src/main/java/com/luminar/reader/data/local/db/AppDatabase.kt`
+- `app/src/main/java/com/luminar/reader/data/local/db/BookDao.kt`
+- `app/src/main/java/com/luminar/reader/di/AppModule.kt`
+- `app/src/main/java/com/luminar/reader/data/repository/BookRepository.kt`
+- `app/src/main/java/com/luminar/reader/data/repository/BookRepositoryImpl.kt`
+- `app/src/main/java/com/luminar/reader/domain/usecase/ImportBookUseCase.kt`
+- `app/src/main/java/com/luminar/reader/domain/usecase/SaveProgressUseCase.kt`
+- `app/src/main/java/com/luminar/reader/data/local/datastore/UserPreferencesRepository.kt`
+- `app/src/main/java/com/luminar/reader/navigation/Screen.kt`
+- `app/src/main/java/com/luminar/reader/navigation/NavGraph.kt`
+- `app/src/main/java/com/luminar/reader/presentation/library/LibraryScreen.kt`
+- `app/src/main/java/com/luminar/reader/presentation/library/LibraryViewModel.kt`
+- `app/src/main/java/com/luminar/reader/presentation/reader/ReaderScreen.kt`
+- `app/src/main/java/com/luminar/reader/presentation/reader/ReaderViewModel.kt`
+- `app/src/main/java/com/luminar/reader/worker/BookAnalysisWorker.kt`
+
+---
+
+## Final Room DB Version
+- **Version**: `6`
+
+## Known Limitations & Deferred Items
+1. Full Stats Dashboard UI deferred to Phase 2B (currently entry point opens summary bottom sheet).
+2. EPUB text selection highlights & dictionary lookup deferred to Phase 2B.
+3. Ollama local LLM integration deferred to Phase 3.
