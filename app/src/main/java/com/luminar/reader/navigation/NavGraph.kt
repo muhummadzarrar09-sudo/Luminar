@@ -18,6 +18,7 @@ import com.luminar.reader.presentation.reader.EpubReaderScreen
 import com.luminar.reader.presentation.reader.ReaderScreen
 import com.luminar.reader.presentation.search.SearchScreen
 import com.luminar.reader.presentation.settings.SettingsScreen
+import com.luminar.reader.presentation.stats.StatsScreen
 
 private const val NAV_ANIMATION_DURATION_MILLIS = 300
 
@@ -81,6 +82,11 @@ fun LuminarNavGraph(
                 },
                 onOpenSearch = {
                     navController.navigate(Screen.Search.createRoute()) {
+                        launchSingleTop = true
+                    }
+                },
+                onOpenStats = {
+                    navController.navigate(Screen.Stats.route) {
                         launchSingleTop = true
                     }
                 },
@@ -214,6 +220,10 @@ fun LuminarNavGraph(
                     navController.navigate(Screen.Reader.createRoute(bookId))
                 }
             )
+        }
+
+        composable(route = Screen.Stats.route) {
+            StatsScreen(onNavigateBack = { navController.navigateUp() })
         }
     }
 }

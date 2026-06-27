@@ -74,6 +74,7 @@ fun LibraryScreen(
     onOpenBook: (Long) -> Unit,
     onOpenEpubBook: (Long) -> Unit,
     onOpenSearch: () -> Unit,
+    onOpenStats: () -> Unit,
     onOpenSettings: () -> Unit,
     viewModel: LibraryViewModel = hiltViewModel()
 ) {
@@ -153,23 +154,7 @@ fun LibraryScreen(
                         )
                     }
 
-                    var showStatsStub by remember { mutableStateOf(false) }
-                    if (showStatsStub) {
-                        androidx.compose.material3.ModalBottomSheet(
-                            onDismissRequest = { showStatsStub = false },
-                            containerColor = MaterialTheme.colorScheme.surface
-                        ) {
-                            Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("Reading Stats Summary", style = MaterialTheme.typography.titleLarge, color = LuminarGold)
-                                Text("Current book: ${uiState.todayMinutesByBookId.values.sum()} min today", color = MaterialTheme.colorScheme.onSurface)
-                                Text("This week: Active sessions tracked", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text("All time: ${uiState.books.size} books loaded", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Spacer(Modifier.height(16.dp))
-                            }
-                        }
-                    }
-
-                    IconButton(onClick = { showStatsStub = true }) {
+                    IconButton(onClick = onOpenStats) {
                         Icon(
                             painter = painterResource(R.drawable.ic_auto_stories_48),
                             contentDescription = "Stats",
