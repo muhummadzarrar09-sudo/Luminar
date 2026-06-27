@@ -34,8 +34,15 @@ Phase 2A expands Luminar from a standalone PDF reader into a dual-format reading
 - **Stack & Database Changes**:
   - **Room Migration v3 → v4**: Added `indexingProgress INTEGER NOT NULL DEFAULT 0` column to `books`. Created `page_content` table and `page_text_fts` virtual FTS4 table index.
 
+### Feature 4: Zoom Memory Tracking
+- **What Was Built**:
+  - Restores saved PDF document zoom scaling (`pdfView.zoomTo()`) after a 100ms render stabilization delay.
+  - Automatically records user zoom scale changes with a 500ms debounce buffer in `ReaderViewModel`.
+  - Added global font size scaling slider (`0.5x to 2.0x`) inside `EpubReaderScreen` bottom controls overlay backed by asynchronous DataStore preferences.
+- **Stack & Database Changes**:
+  - **Room Migration v4 → v5**: Added `lastZoomLevel REAL NOT NULL DEFAULT 1.0` column to `reading_progress`. Added `fontScale` float key to DataStore preferences.
+
 ---
 
 ## Remaining Features in Phase 2A Sprint
-- **Feature 4**: Zoom Level Memory tracking per book.
 - **Feature 5**: Active Reading Timer and Session Tracking (`ReadingSession` entity).
