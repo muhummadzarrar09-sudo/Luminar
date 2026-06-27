@@ -221,6 +221,18 @@ private fun EpubControlsOverlay(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    var showPanel by remember { mutableStateOf(false) }
+                    if (showPanel) {
+                        com.luminar.reader.presentation.components.HighlightsPanel(
+                            highlights = uiState.highlights,
+                            onDismiss = { showPanel = false },
+                            onHighlightClick = { /* Jump to cfi */ },
+                            onDeleteHighlight = { /* delete */ }
+                        )
+                    }
+                    IconButton(onClick = { onInteraction(); showPanel = true }) {
+                        Icon(painter = painterResource(R.drawable.ic_auto_stories_48), contentDescription = "Highlights", tint = LuminarGold)
+                    }
                     TextButton(onClick = { onInteraction(); onToggleTheme() }, colors = ButtonDefaults.textButtonColors(contentColor = LuminarGold)) {
                         Icon(painter = painterResource(R.drawable.ic_palette_24), contentDescription = null, tint = LuminarGold)
                         Text(modifier = Modifier.padding(start = 6.dp), text = when (uiState.currentTheme) {

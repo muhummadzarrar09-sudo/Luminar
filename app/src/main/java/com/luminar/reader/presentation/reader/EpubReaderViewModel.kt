@@ -25,10 +25,15 @@ import kotlinx.coroutines.launch
 import com.luminar.reader.data.local.db.BookTocDao
 import com.luminar.reader.data.model.BookToc
 
+import com.luminar.reader.data.local.db.HighlightDao
+import com.luminar.reader.data.model.BookFormat
+import com.luminar.reader.data.model.Highlight
+
 data class EpubReaderUiState(
     val book: Book? = null,
     val publication: Publication? = null,
     val tocItems: List<BookToc> = emptyList(),
+    val highlights: List<Highlight> = emptyList(),
     val initialCfi: String? = null,
     val fontScale: Float = 1.0f,
     val isLoading: Boolean = true,
@@ -44,6 +49,7 @@ class EpubReaderViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val bookRepository: BookRepository,
     private val bookTocDao: BookTocDao,
+    private val highlightDao: HighlightDao,
     private val epubBookLoader: EpubBookLoader,
     private val saveProgressUseCase: SaveProgressUseCase,
     private val userPreferencesRepository: UserPreferencesRepository,
@@ -60,6 +66,7 @@ class EpubReaderViewModel @Inject constructor(
     init {
         observeBookAndPublication()
         observeToc()
+        observeHighlights()
         observePreferences()
         observeReaderCommands()
         markBookOpened()
@@ -136,6 +143,37 @@ class EpubReaderViewModel @Inject constructor(
                 _uiState.update { it.copy(tocItems = items) }
             }
         }
+    }
+
+    private fun observeHighlights() {
+        viewModelScope.launch {
+            highlightDao.getHighlightsForBook(bookId).collect { list ->
+                _uiState.update { it.copy(highlights = list) }
+            }
+        }
+    }
+
+    fun addEpubHighlight(color: Int, note: String?, cfi: String?, text: String?) {
+        viewModelScope.launch {
+            val h = Highlight(
+                bookId = bookId,
+                format = BookFormat.EPUB,
+                pdfPage = null,
+                rectLeft = null,
+                rectTop = null,
+                rectRight = null,
+                rectBottom = null,
+                epubCfi = cfi,
+                epubSelectedText = text,
+                color = color,
+                noteText = note
+            )
+            highlightDao.insertHighlight(h)
+        }
+    }
+
+    fun deleteHighlight(h: Highlight) {
+        viewModelScope.launch { highlightDao.deleteHighlight(h) }
     }
 
     private fun observePreferences() {

@@ -16,6 +16,7 @@ import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 
 import com.luminar.reader.data.local.db.BookTocDao
+import com.luminar.reader.data.local.db.HighlightDao
 import com.luminar.reader.data.local.db.PageContentDao
 import com.luminar.reader.data.local.db.ReadingSessionDao
 
@@ -38,7 +39,8 @@ object DatabaseModule {
             AppDatabase.MIGRATION_2_3,
             AppDatabase.MIGRATION_3_4,
             AppDatabase.MIGRATION_4_5,
-            AppDatabase.MIGRATION_5_6
+            AppDatabase.MIGRATION_5_6,
+            AppDatabase.MIGRATION_6_7
         )
         .build()
     }
@@ -58,6 +60,10 @@ object DatabaseModule {
     @Provides
     @Singleton
     fun provideReadingSessionDao(database: AppDatabase): ReadingSessionDao = database.readingSessionDao()
+
+    @Provides
+    @Singleton
+    fun provideHighlightDao(database: AppDatabase): HighlightDao = database.highlightDao()
 }
 
 @Module

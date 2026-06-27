@@ -403,6 +403,20 @@ private fun ReaderTopControls(
                 overflow = TextOverflow.Ellipsis
             )
 
+            var showPanel by remember { mutableStateOf(false) }
+            if (showPanel) {
+                com.luminar.reader.presentation.components.HighlightsPanel(
+                    highlights = uiState.highlights,
+                    onDismiss = { showPanel = false },
+                    onHighlightClick = { h -> h.pdfPage?.let { viewModel.onEvent(ReaderEvent.GoToPage(it)) } },
+                    onDeleteHighlight = viewModel::deleteHighlight
+                )
+            }
+
+            IconButton(onClick = { onInteraction(); showPanel = true }) {
+                Icon(painter = painterResource(R.drawable.ic_auto_stories_48), contentDescription = "Highlights", tint = LuminarGold)
+            }
+
             TextButton(
                 onClick = {
                     onInteraction()
