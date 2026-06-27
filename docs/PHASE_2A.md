@@ -25,9 +25,17 @@ Phase 2A expands Luminar from a standalone PDF reader into a dual-format reading
 - **Stack & Database Changes**:
   - **Room Migration v2 → v3**: Created `book_toc` table with foreign key cascading deletion bound to `books.id`.
 
+### Feature 3: Background Text Indexing & Fast Search
+- **What Was Built**:
+  - Asynchronous document chunk text extraction and database indexing via WorkManager (`BookAnalysisWorker`). Automatically enqueued immediately after successful PDF or EPUB file import.
+  - Added `indexingProgress` field (`0-100`) to `Book` model to track extraction status.
+  - Built standalone `SearchScreen` and `SearchViewModel` supporting dual search modes ("This Book" scoped tab vs "All Books" global tab) with 300ms query debouncing.
+  - Implemented bold search keyword match highlighting inside excerpt previews (`buildHighlightedString()`).
+- **Stack & Database Changes**:
+  - **Room Migration v3 → v4**: Added `indexingProgress INTEGER NOT NULL DEFAULT 0` column to `books`. Created `page_content` table and `page_text_fts` virtual FTS4 table index.
+
 ---
 
 ## Remaining Features in Phase 2A Sprint
-- **Feature 3**: Background Text Indexing (Room FTS4 virtual tables) + Fast In-Book Search.
 - **Feature 4**: Zoom Level Memory tracking per book.
 - **Feature 5**: Active Reading Timer and Session Tracking (`ReadingSession` entity).
