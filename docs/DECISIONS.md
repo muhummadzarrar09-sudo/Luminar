@@ -27,3 +27,18 @@ This document records the rationale behind critical architectural and dependency
 - **Context**: Implementing fast in-book full-text search across extracted document text.
 - **Decision**: Use Room Virtual Tables backed by SQLite FTS4 (`@Fts4`).
 - **Rationale**: Standard SQL `LIKE '%query%'` queries require full table scans of raw text strings, causing severe UI jank and high memory consumption on mobile devices when searching large 500+ page books. SQLite FTS4 builds an inverted index word token map, enabling near-instantaneous search results, prefix matching, and excerpt generation. FTS4 was selected over FTS5 to guarantee seamless compatibility across all devices running Android API 26 (Min SDK) without requiring bundled NDK SQLite libraries.
+
+## 6. Dictionary API Choice (`dictionaryapi.dev`)
+- **Context**: Enabling in-book word definition popups without bloating app binary size.
+- **Decision**: Adopted `https://api.dictionaryapi.dev/api/v2/entries/en/{word}` backed by a 7-day local Room SQLite cache (`DictionaryCache`).
+- **Rationale**: Completely free, requires no authentication API keys, has no personal rate limits, and provides structured JSON with phonetic pronunciation and multi-part-of-speech definitions.
+
+## 7. PDF Highlights via Bounding Rect Overlays
+- **Context**: Renders user annotations across PDF viewing screens.
+- **Decision**: Position-based rectangular coordinate saving drawn via Canvas overlay.
+- **Rationale**: The mhiew PDFView fork renders PDF pages directly to Android Display Bitmaps via native NDK PDFium bindings. It does not expose underlying character layout boxes or text selection handles. Bounding rectangle saving ensures users can highlight key paragraphs accurately.
+
+## 8. Stats Activity Chart via Compose Canvas
+- **Context**: Displaying weekly reading time metrics in a 7-bar chart.
+- **Decision**: Custom Compose `Canvas` drawing instead of adding third-party chart libraries (e.g. Vico, MPAndroidChart).
+- **Rationale**: Enforces strict constraint compliance, keeping APK binary footprint minimal and avoiding Gradle dependency conflicts. Taller rounded bars scale dynamically to peak daily reading minutes.
