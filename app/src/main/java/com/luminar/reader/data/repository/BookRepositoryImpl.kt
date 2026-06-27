@@ -151,7 +151,8 @@ class BookRepositoryImpl @Inject constructor(
         bookId: Long,
         currentPage: Int,
         scrollOffset: Float,
-        epubCfi: String?
+        epubCfi: String?,
+        zoomLevel: Float
     ) {
         bookDao.upsertProgress(
             ReadingProgress(
@@ -159,7 +160,8 @@ class BookRepositoryImpl @Inject constructor(
                 currentPage = currentPage.coerceAtLeast(0),
                 scrollOffset = scrollOffset,
                 lastReadAt = System.currentTimeMillis(),
-                epubCfi = epubCfi
+                epubCfi = epubCfi,
+                lastZoomLevel = zoomLevel
             )
         )
     }

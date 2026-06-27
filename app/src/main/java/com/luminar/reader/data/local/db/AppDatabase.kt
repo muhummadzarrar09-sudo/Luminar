@@ -22,7 +22,7 @@ import com.luminar.reader.data.model.ReadingProgress
         PageContent::class,
         PageTextFts::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -70,6 +70,12 @@ abstract class AppDatabase : RoomDatabase() {
                 """.trimIndent())
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_page_content_bookId` ON `page_content` (`bookId`)")
                 db.execSQL("CREATE VIRTUAL TABLE IF NOT EXISTS `page_text_fts` USING FTS4(`content`, content=`page_content`)")
+            }
+        }
+
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE reading_progress ADD COLUMN lastZoomLevel REAL NOT NULL DEFAULT 1.0")
             }
         }
     }

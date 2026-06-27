@@ -30,6 +30,7 @@ data class EpubReaderUiState(
     val publication: Publication? = null,
     val tocItems: List<BookToc> = emptyList(),
     val initialCfi: String? = null,
+    val fontScale: Float = 1.0f,
     val isLoading: Boolean = true,
     val showControls: Boolean = false,
     val currentTheme: AppTheme = AppTheme.DARK_AMOLED,
@@ -82,6 +83,12 @@ class EpubReaderViewModel @Inject constructor(
                 epubCfi = cfiString
             )
         }
+    }
+
+    fun onFontScaleChanged(scale: Float) {
+        _uiState.update { it.copy(fontScale = scale) }
+        onControlsInteraction()
+        viewModelScope.launch { userPreferencesRepository.setFontScale(scale) }
     }
 
     fun onControlsInteraction() {
@@ -138,7 +145,8 @@ class EpubReaderViewModel @Inject constructor(
                     it.copy(
                         currentTheme = prefs.selectedTheme,
                         keepScreenOn = prefs.keepScreenOn,
-                        volumeButtonsPageTurn = prefs.volumeButtonsPageTurn
+                        volumeButtonsPageTurn = prefs.volumeButtonsPageTurn,
+                        fontScale = prefs.fontScale
                     )
                 }
             }

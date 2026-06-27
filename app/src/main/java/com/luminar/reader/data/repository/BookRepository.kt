@@ -14,6 +14,6 @@ interface BookRepository {
     suspend fun importPdf(uri: Uri): Long
     suspend fun importEpub(uri: Uri): Long
     suspend fun deleteBook(book: Book)
-    suspend fun saveProgress(bookId: Long, currentPage: Int, scrollOffset: Float = 0f, epubCfi: String? = null)
+    suspend fun saveProgress(bookId: Long, currentPage: Int, scrollOffset: Float = 0f, epubCfi: String? = null, zoomLevel: Float = 1.0f)
     suspend fun markBookOpened(bookId: Long)
 }

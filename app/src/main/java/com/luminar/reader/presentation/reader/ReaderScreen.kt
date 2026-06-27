@@ -268,9 +268,11 @@ private fun PdfReaderView(
                     .enableDoubletap(true)
                     .onPageChange { page, _ ->
                         onPageChanged(page)
+                        viewModel.onZoomChanged(pdfView.zoom)
                     }
                     .onLoad { pageCount ->
                         onPdfLoaded(pageCount)
+                        pdfView.postDelayed({ pdfView.zoomTo(uiState.savedZoom) }, 100)
                     }
                     .onTap { event ->
                         if (pdfView.isCenterTap(event)) {

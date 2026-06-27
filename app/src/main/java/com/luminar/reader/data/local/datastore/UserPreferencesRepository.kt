@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.luminar.reader.data.model.AppTheme
@@ -30,7 +31,8 @@ data class UserPreferences(
     val keepScreenOn: Boolean = true,
     val volumeButtonsPageTurn: Boolean = true,
     val ollamaBaseUrl: String = DEFAULT_OLLAMA_BASE_URL,
-    val ollamaModel: String = DEFAULT_OLLAMA_MODEL
+    val ollamaModel: String = DEFAULT_OLLAMA_MODEL,
+    val fontScale: Float = 1.0f
 )
 
 @Singleton
@@ -52,9 +54,16 @@ class UserPreferencesRepository @Inject constructor(
                 keepScreenOn = preferences[PreferenceKeys.KEEP_SCREEN_ON] ?: true,
                 volumeButtonsPageTurn = preferences[PreferenceKeys.VOLUME_BUTTONS_PAGE_TURN] ?: true,
                 ollamaBaseUrl = preferences[PreferenceKeys.OLLAMA_BASE_URL] ?: DEFAULT_OLLAMA_BASE_URL,
-                ollamaModel = preferences[PreferenceKeys.OLLAMA_MODEL] ?: DEFAULT_OLLAMA_MODEL
+                ollamaModel = preferences[PreferenceKeys.OLLAMA_MODEL] ?: DEFAULT_OLLAMA_MODEL,
+                fontScale = preferences[PreferenceKeys.FONT_SCALE] ?: 1.0f
             )
         }
+
+    suspend fun setFontScale(scale: Float) {
+        context.userPreferencesDataStore.edit { preferences ->
+            preferences[PreferenceKeys.FONT_SCALE] = scale
+        }
+    }
 
     suspend fun setSelectedTheme(theme: AppTheme) {
         context.userPreferencesDataStore.edit { preferences ->
@@ -98,5 +107,6 @@ class UserPreferencesRepository @Inject constructor(
         val VOLUME_BUTTONS_PAGE_TURN = booleanPreferencesKey("volume_buttons_page_turn")
         val OLLAMA_BASE_URL = stringPreferencesKey("ollama_base_url")
         val OLLAMA_MODEL = stringPreferencesKey("ollama_model")
+        val FONT_SCALE = floatPreferencesKey("font_scale")
     }
 }

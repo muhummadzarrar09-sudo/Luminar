@@ -33,6 +33,7 @@ data class ReaderUiState(
     val tocItems: List<BookToc> = emptyList(),
     val currentPage: Int = 0,
     val totalPages: Int = 0,
+    val savedZoom: Float = 1.0f,
     val isLoading: Boolean = true,
     val showControls: Boolean = false,
     val currentTheme: AppTheme = AppTheme.DARK_AMOLED,
@@ -67,9 +68,13 @@ class ReaderViewModel @Inject constructor(
     private val pageChanges = MutableSharedFlow<Int>(
         extraBufferCapacity = 64
     )
+    private val zoomChanges = MutableSharedFlow<Float>(
+        extraBufferCapacity = 64
+    )
 
     private var controlsAutoHideJob: Job? = null
     private var lastPersistedPage: Int = 0
+    private var lastPersistedZoom: Float = 1.0f
 
     init {
         observeBook()
@@ -77,6 +82,7 @@ class ReaderViewModel @Inject constructor(
         observeInitialProgress()
         observePreferences()
         observePageChanges()
+        observeZoomChanges()
         observeReaderCommands()
         markBookOpened()
     }
@@ -100,6 +106,11 @@ class ReaderViewModel @Inject constructor(
                 currentPage = state.currentPage.coerceIn(0, maxPage)
             )
         }
+    }
+
+    fun onZoomChanged(zoom: Float) {
+        if (abs(zoom - lastPersistedZoom) < 0.05f) return
+        zoomChanges.tryEmit(zoom)
     }
 
     fun onControlsInteraction() {
@@ -162,9 +173,21 @@ class ReaderViewModel @Inject constructor(
             val progress = bookRepository.getProgress(bookId).first()
             if (progress != null) {
                 lastPersistedPage = progress.currentPage
+                lastPersistedZoom = progress.lastZoomLevel
                 _uiState.update {
-                    it.copy(currentPage = progress.currentPage.coerceAtLeast(0))
+                    it.copy(
+                        currentPage = progress.currentPage.coerceAtLeast(0),
+                        savedZoom = progress.lastZoomLevel
+                    )
                 }
+            }
+        }
+    }
+
+    private fun observeZoomChanges() {
+        viewModelScope.launch {
+            zoomChanges.debounce(500).collect { zoom ->
+                persistZoom(zoom)
             }
         }
     }
@@ -272,9 +295,22 @@ class ReaderViewModel @Inject constructor(
         saveProgressUseCase(
             bookId = book.id,
             currentPage = target,
-            scrollOffset = 0f
+            scrollOffset = 0f,
+            zoomLevel = _uiState.value.savedZoom
         )
         lastPersistedPage = target
+    }
+
+    private suspend fun persistZoom(zoom: Float) {
+        val book = _uiState.value.book ?: return
+        _uiState.update { it.copy(savedZoom = zoom) }
+        saveProgressUseCase(
+            bookId = book.id,
+            currentPage = _uiState.value.currentPage,
+            scrollOffset = 0f,
+            zoomLevel = zoom
+        )
+        lastPersistedZoom = zoom
     }
 
     private fun maxPage(): Int {

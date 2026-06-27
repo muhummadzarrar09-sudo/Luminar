@@ -158,6 +158,7 @@ fun EpubReaderScreen(
                     uiState = uiState,
                     onNavigateBack = currentOnNavigateBack,
                     onToggleTheme = { viewModel.onEvent(ReaderEvent.ThemeChanged(uiState.currentTheme.next())) },
+                    onFontScaleChange = viewModel::onFontScaleChanged,
                     onInteraction = viewModel::onControlsInteraction
                 )
             }
@@ -188,6 +189,7 @@ private fun EpubControlsOverlay(
     uiState: EpubReaderUiState,
     onNavigateBack: () -> Unit,
     onToggleTheme: () -> Unit,
+    onFontScaleChange: (Float) -> Unit,
     onInteraction: () -> Unit
 ) {
     AnimatedVisibility(
@@ -227,6 +229,22 @@ private fun EpubControlsOverlay(
                             AppTheme.LIGHT -> "Light"
                         })
                     }
+                }
+            }
+
+            Surface(
+                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
+                color = containerColor,
+                contentColor = contentColor
+            ) {
+                Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
+                    Text("Font Size (${(uiState.fontScale * 100).toInt()}%)", style = MaterialTheme.typography.labelMedium, color = contentColor)
+                    androidx.compose.material3.Slider(
+                        value = uiState.fontScale,
+                        onValueChange = { onFontScaleChange(it); onInteraction() },
+                        valueRange = 0.5f..2.0f,
+                        colors = androidx.compose.material3.SliderDefaults.colors(thumbColor = LuminarGold, activeTrackColor = LuminarGold)
+                    )
                 }
             }
         }
