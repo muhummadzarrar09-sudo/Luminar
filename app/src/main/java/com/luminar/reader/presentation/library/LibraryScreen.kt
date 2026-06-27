@@ -73,6 +73,7 @@ import java.io.File
 fun LibraryScreen(
     onOpenBook: (Long) -> Unit,
     onOpenEpubBook: (Long) -> Unit,
+    onOpenSearch: () -> Unit,
     onOpenSettings: () -> Unit,
     viewModel: LibraryViewModel = hiltViewModel()
 ) {
@@ -141,6 +142,14 @@ fun LibraryScreen(
                                 .size(22.dp),
                             strokeWidth = 2.dp,
                             color = LuminarGold
+                        )
+                    }
+
+                    IconButton(onClick = onOpenSearch) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_search_24),
+                            contentDescription = "Search",
+                            tint = MaterialTheme.colorScheme.onBackground
                         )
                     }
 

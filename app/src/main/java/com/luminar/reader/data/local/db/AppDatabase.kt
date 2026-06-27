@@ -9,6 +9,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import com.luminar.reader.data.model.Book
 import com.luminar.reader.data.model.BookInsight
 import com.luminar.reader.data.model.BookToc
+import com.luminar.reader.data.model.PageContent
+import com.luminar.reader.data.model.PageTextFts
 import com.luminar.reader.data.model.ReadingProgress
 
 @Database(
@@ -16,15 +18,18 @@ import com.luminar.reader.data.model.ReadingProgress
         Book::class,
         ReadingProgress::class,
         BookInsight::class,
-        BookToc::class
+        BookToc::class,
+        PageContent::class,
+        PageTextFts::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun bookDao(): BookDao
     abstract fun bookTocDao(): BookTocDao
+    abstract fun pageContentDao(): PageContentDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -48,6 +53,23 @@ abstract class AppDatabase : RoomDatabase() {
                     )
                 """.trimIndent())
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_book_toc_bookId` ON `book_toc` (`bookId`)")
+            }
+        }
+
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE books ADD COLUMN indexingProgress INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `page_content` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `bookId` INTEGER NOT NULL,
+                        `pageOrChapter` INTEGER NOT NULL,
+                        `chunkIndex` INTEGER NOT NULL,
+                        `content` TEXT NOT NULL
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_page_content_bookId` ON `page_content` (`bookId`)")
+                db.execSQL("CREATE VIRTUAL TABLE IF NOT EXISTS `page_text_fts` USING FTS4(`content`, content=`page_content`)")
             }
         }
     }

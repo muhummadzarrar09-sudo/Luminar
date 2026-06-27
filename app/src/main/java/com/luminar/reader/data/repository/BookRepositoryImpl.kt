@@ -29,6 +29,13 @@ import com.luminar.reader.data.epub.EpubBookLoader
 import com.luminar.reader.data.local.db.BookTocDao
 import com.luminar.reader.data.model.BookToc
 
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OutOfQuotaPolicy
+import androidx.work.WorkManager
+import androidx.work.workDataOf
+import com.luminar.reader.worker.BookAnalysisWorker
+
 @Singleton
 class BookRepositoryImpl @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -36,6 +43,17 @@ class BookRepositoryImpl @Inject constructor(
     private val bookTocDao: BookTocDao,
     private val epubBookLoader: EpubBookLoader
 ) : BookRepository {
+
+    private fun triggerIndexing(bookId: Long) {
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            "index_$bookId",
+            ExistingWorkPolicy.KEEP,
+            OneTimeWorkRequestBuilder<BookAnalysisWorker>()
+                .setInputData(workDataOf("bookId" to bookId))
+                .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                .build()
+        )
+    }
 
     override fun getAllBooks(): Flow<List<Book>> = bookDao.getAllBooks()
 
@@ -61,7 +79,9 @@ class BookRepositoryImpl @Inject constructor(
                 totalPages = metadata.pageCount
             )
 
-            bookDao.insertBook(book)
+            val bookId = bookDao.insertBook(book)
+            triggerIndexing(bookId)
+            bookId
         } catch (cancellation: CancellationException) {
             destination.delete()
             throw cancellation
@@ -105,7 +125,7 @@ class BookRepositoryImpl @Inject constructor(
             if (tocEntities.isNotEmpty()) {
                 bookTocDao.insertAll(tocEntities)
             }
-
+            triggerIndexing(bookId)
             bookId
         } catch (cancellation: CancellationException) {
             destination.delete()

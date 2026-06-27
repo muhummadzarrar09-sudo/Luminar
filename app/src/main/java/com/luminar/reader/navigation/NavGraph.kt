@@ -16,6 +16,7 @@ import androidx.navigation.navArgument
 import com.luminar.reader.presentation.library.LibraryScreen
 import com.luminar.reader.presentation.reader.EpubReaderScreen
 import com.luminar.reader.presentation.reader.ReaderScreen
+import com.luminar.reader.presentation.search.SearchScreen
 import com.luminar.reader.presentation.settings.SettingsScreen
 
 private const val NAV_ANIMATION_DURATION_MILLIS = 300
@@ -75,6 +76,11 @@ fun LuminarNavGraph(
                 },
                 onOpenEpubBook = { bookId ->
                     navController.navigate(Screen.EpubReader.createRoute(bookId)) {
+                        launchSingleTop = true
+                    }
+                },
+                onOpenSearch = {
+                    navController.navigate(Screen.Search.createRoute()) {
                         launchSingleTop = true
                     }
                 },
@@ -189,6 +195,24 @@ fun LuminarNavGraph(
         ) {
             SettingsScreen(
                 onNavigateBack = { navController.navigateUp() }
+            )
+        }
+
+        composable(
+            route = Screen.Search.route,
+            arguments = listOf(
+                navArgument("bookId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                }
+            )
+        ) {
+            SearchScreen(
+                onNavigateBack = { navController.navigateUp() },
+                onResultClick = { bookId, page ->
+                    navController.navigate(Screen.Reader.createRoute(bookId))
+                }
             )
         }
     }

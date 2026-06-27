@@ -16,6 +16,7 @@ import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 
 import com.luminar.reader.data.local.db.BookTocDao
+import com.luminar.reader.data.local.db.PageContentDao
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -31,7 +32,7 @@ object DatabaseModule {
             AppDatabase::class.java,
             "luminar_reader.db"
         )
-        .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3)
+        .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3, AppDatabase.MIGRATION_3_4)
         .build()
     }
 
@@ -42,6 +43,10 @@ object DatabaseModule {
     @Provides
     @Singleton
     fun provideBookTocDao(database: AppDatabase): BookTocDao = database.bookTocDao()
+
+    @Provides
+    @Singleton
+    fun providePageContentDao(database: AppDatabase): PageContentDao = database.pageContentDao()
 }
 
 @Module

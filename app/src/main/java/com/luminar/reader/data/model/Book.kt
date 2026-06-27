@@ -20,5 +20,6 @@ data class Book(
     val totalPages: Int,
     val addedAt: Long = System.currentTimeMillis(),
     val lastOpenedAt: Long? = null,
-    val isAnalyzed: Boolean = false
+    val isAnalyzed: Boolean = false,
+    val indexingProgress: Int = 0
 )
