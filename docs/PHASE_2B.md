@@ -24,8 +24,16 @@ Phase 2B elevates Luminar Reader into an interactive study companion by introduc
 - **Stack & Database Changes**:
   - **Room Migration v7 → v8**: Created `bookmarks` table with cascading foreign key bound to `books.id`.
 
+### Feature 3: Full Reading Stats Dashboard
+- **What Was Built**:
+  - Replaced legacy BottomSheet stub with dedicated standalone `StatsScreen` and `StatsViewModel`.
+  - Implemented consecutive daily streak tracking algorithm (`duration >= 1 min`) going back from today.
+  - Built custom 7-bar weekly activity chart using Compose `Canvas` (zero external charting library dependencies). Mon..Sun layout with taller rounded gold bars and bright today indicators.
+  - Added All-Time aggregate stat cards (Books Finished, Total Hours, Avg Session) and Recently Read book progress breakdown list.
+- **Stack & Database Changes**:
+  - Leveraged existing `ReadingSessionDao` and `BookRepository` Flow combiners.
+
 ---
 
 ## Remaining Features in Phase 2B Sprint
-- **Feature 3**: Full Reading Stats Dashboard chart screen.
 - **Feature 4**: Offline Dictionary Lookup (EPUB only).
