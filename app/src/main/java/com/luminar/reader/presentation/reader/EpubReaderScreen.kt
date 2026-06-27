@@ -154,6 +154,17 @@ fun EpubReaderScreen(
                     onToggleControls = { viewModel.onEvent(ReaderEvent.ToggleControls) }
                 )
 
+                if (uiState.dictWord != null) {
+                    com.luminar.reader.presentation.components.DictionaryBottomSheet(
+                        word = uiState.dictWord,
+                        entry = uiState.dictEntry,
+                        isLoading = uiState.isDictLoading,
+                        isErrorOffline = uiState.isDictOfflineError,
+                        onDismiss = viewModel::dismissDict,
+                        onRetry = { viewModel.lookupWord(uiState.dictWord) }
+                    )
+                }
+
                 EpubControlsOverlay(
                     uiState = uiState,
                     onNavigateBack = currentOnNavigateBack,

@@ -17,9 +17,13 @@ import javax.inject.Singleton
 
 import com.luminar.reader.data.local.db.BookmarkDao
 import com.luminar.reader.data.local.db.BookTocDao
+import com.luminar.reader.data.local.db.DictionaryDao
 import com.luminar.reader.data.local.db.HighlightDao
 import com.luminar.reader.data.local.db.PageContentDao
 import com.luminar.reader.data.local.db.ReadingSessionDao
+import com.luminar.reader.network.DictionaryApiService
+import retrofit2.Retrofit
+import retrofit2.converter.moshi.MoshiConverterFactory
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -42,7 +46,8 @@ object DatabaseModule {
             AppDatabase.MIGRATION_4_5,
             AppDatabase.MIGRATION_5_6,
             AppDatabase.MIGRATION_6_7,
-            AppDatabase.MIGRATION_7_8
+            AppDatabase.MIGRATION_7_8,
+            AppDatabase.MIGRATION_8_9
         )
         .build()
     }
@@ -70,6 +75,24 @@ object DatabaseModule {
     @Provides
     @Singleton
     fun provideBookmarkDao(database: AppDatabase): BookmarkDao = database.bookmarkDao()
+
+    @Provides
+    @Singleton
+    fun provideDictionaryDao(database: AppDatabase): DictionaryDao = database.dictionaryDao()
+}
+
+@Module
+@InstallIn(SingletonComponent::class)
+object NetworkModule {
+    @Provides
+    @Singleton
+    fun provideDictionaryApiService(): DictionaryApiService {
+        return Retrofit.Builder()
+            .baseUrl("https://api.dictionaryapi.dev/")
+            .addConverterFactory(MoshiConverterFactory.create())
+            .build()
+            .create(DictionaryApiService::class.java)
+    }
 }
 
 @Module

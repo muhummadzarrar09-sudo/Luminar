@@ -12,6 +12,7 @@ import com.luminar.reader.data.model.BookToc
 import com.luminar.reader.data.model.PageContent
 import com.luminar.reader.data.model.PageTextFts
 import com.luminar.reader.data.model.Bookmark
+import com.luminar.reader.data.model.DictionaryCache
 import com.luminar.reader.data.model.Highlight
 import com.luminar.reader.data.model.ReadingProgress
 import com.luminar.reader.data.model.ReadingSession
@@ -26,9 +27,10 @@ import com.luminar.reader.data.model.ReadingSession
         PageTextFts::class,
         ReadingSession::class,
         Highlight::class,
-        Bookmark::class
+        Bookmark::class,
+        DictionaryCache::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -39,6 +41,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun readingSessionDao(): ReadingSessionDao
     abstract fun highlightDao(): HighlightDao
     abstract fun bookmarkDao(): BookmarkDao
+    abstract fun dictionaryDao(): DictionaryDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -143,6 +146,18 @@ abstract class AppDatabase : RoomDatabase() {
                     )
                 """.trimIndent())
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_bookmarks_bookId` ON `bookmarks` (`bookId`)")
+            }
+        }
+
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `dictionary_cache` (
+                        `word` TEXT PRIMARY KEY NOT NULL,
+                        `responseJson` TEXT NOT NULL,
+                        `fetchedAt` INTEGER NOT NULL
+                    )
+                """.trimIndent())
             }
         }
     }

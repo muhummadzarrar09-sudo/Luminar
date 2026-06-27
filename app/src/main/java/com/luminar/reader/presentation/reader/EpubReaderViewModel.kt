@@ -31,6 +31,9 @@ import com.luminar.reader.data.model.BookFormat
 import com.luminar.reader.data.model.Bookmark
 import com.luminar.reader.data.model.Highlight
 
+import com.luminar.reader.data.repository.DictionaryRepository
+import com.luminar.reader.network.DictEntry
+
 data class EpubReaderUiState(
     val book: Book? = null,
     val publication: Publication? = null,
@@ -41,6 +44,10 @@ data class EpubReaderUiState(
     val currentCfi: String = "",
     val initialCfi: String? = null,
     val fontScale: Float = 1.0f,
+    val dictWord: String? = null,
+    val dictEntry: DictEntry? = null,
+    val isDictLoading: Boolean = false,
+    val isDictOfflineError: Boolean = false,
     val isLoading: Boolean = true,
     val showControls: Boolean = false,
     val currentTheme: AppTheme = AppTheme.DARK_AMOLED,
@@ -56,6 +63,7 @@ class EpubReaderViewModel @Inject constructor(
     private val bookTocDao: BookTocDao,
     private val highlightDao: HighlightDao,
     private val bookmarkDao: BookmarkDao,
+    private val dictionaryRepository: DictionaryRepository,
     private val epubBookLoader: EpubBookLoader,
     private val saveProgressUseCase: SaveProgressUseCase,
     private val userPreferencesRepository: UserPreferencesRepository,
@@ -134,6 +142,20 @@ class EpubReaderViewModel @Inject constructor(
 
     fun deleteBookmark(b: Bookmark) {
         viewModelScope.launch { bookmarkDao.deleteBookmark(b) }
+    }
+
+    fun lookupWord(word: String) {
+        val clean = word.trim()
+        if (clean.isEmpty()) return
+        _uiState.update { it.copy(dictWord = clean, isDictLoading = true, isDictOfflineError = false, dictEntry = null) }
+        viewModelScope.launch {
+            val res = dictionaryRepository.lookup(clean)
+            _uiState.update { it.copy(dictEntry = res.entry, isDictOfflineError = res.isOfflineError, isDictLoading = false) }
+        }
+    }
+
+    fun dismissDict() {
+        _uiState.update { it.copy(dictWord = null, dictEntry = null) }
     }
 
     fun renameBookmark(b: Bookmark, newLabel: String) {
