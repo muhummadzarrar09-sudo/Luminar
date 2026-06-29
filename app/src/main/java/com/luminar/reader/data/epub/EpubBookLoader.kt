@@ -3,9 +3,11 @@ package com.luminar.reader.data.epub
 import android.content.Context
 import android.graphics.Bitmap
 import org.readium.r2.shared.publication.Publication
-import org.readium.r2.shared.publication.asset.FileAsset
 import org.readium.r2.shared.publication.services.cover
-import org.readium.r2.streamer.Streamer
+import org.readium.r2.shared.util.asset.AssetRetriever
+import org.readium.r2.shared.util.http.DefaultHttpClient
+import org.readium.r2.streamer.PublicationOpener
+import org.readium.r2.streamer.parser.DefaultPublicationParser
 import java.io.File
 import java.util.UUID
 import javax.inject.Inject
@@ -30,11 +32,23 @@ data class EpubMetadata(
 class EpubBookLoader @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
-    private val streamer by lazy { Streamer(context) }
+    private val httpClient by lazy { DefaultHttpClient() }
+    private val assetRetriever by lazy { AssetRetriever(context.contentResolver, httpClient) }
+    private val publicationOpener by lazy {
+        PublicationOpener(
+            DefaultPublicationParser(
+                context = context,
+                httpClient = httpClient,
+                assetRetriever = assetRetriever,
+                pdfFactory = null
+            )
+        )
+    }
 
     suspend fun openPublication(file: File): Publication? = withContext(Dispatchers.IO) {
         runCatching {
-            streamer.open(FileAsset(file), allowUserInteraction = false).getOrNull()
+            val asset = assetRetriever.retrieve(file).getOrNull() ?: return@runCatching null
+            publicationOpener.open(asset, allowUserInteraction = false).getOrNull()
         }.getOrNull()
     }
 
@@ -55,7 +69,7 @@ class EpubBookLoader @Inject constructor(
             }
 
             val toc = publication.tableOfContents.map { link ->
-                EpubTocItem(title = link.title ?: "Chapter", href = link.href)
+                EpubTocItem(title = link.title ?: "Chapter", href = link.href.toString())
             }
 
             EpubMetadata(title = title, author = author, coverPath = coverPath, toc = toc)

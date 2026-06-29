@@ -30,6 +30,7 @@ import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.rememberDrawerState
 import com.luminar.reader.presentation.components.TocDrawer
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -73,6 +74,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.github.barteksc.pdfviewer.PDFView
 import com.luminar.reader.R
 import com.luminar.reader.data.model.AppTheme
+import com.luminar.reader.data.model.Highlight
 import com.luminar.reader.presentation.theme.LuminarGold
 import com.luminar.reader.presentation.theme.next
 import com.luminar.reader.presentation.theme.readerBackgroundColor
@@ -201,6 +203,7 @@ fun ReaderScreen(
                         viewModel.onEvent(ReaderEvent.PageChanged(page))
                     },
                     onPdfLoaded = viewModel::onPdfLoaded,
+                    onZoomChanged = viewModel::onZoomChanged,
                     onToggleControls = {
                         viewModel.onEvent(ReaderEvent.ToggleControls)
                     }
@@ -220,6 +223,11 @@ fun ReaderScreen(
                     onGoToPage = { page ->
                         viewModel.onEvent(ReaderEvent.GoToPage(page))
                     },
+                    onHighlightClick = { h ->
+                        h.pdfPage?.let { viewModel.onEvent(ReaderEvent.GoToPage(it)) }
+                    },
+                    onDeleteHighlight = viewModel::deleteHighlight,
+                    onToggleBookmark = viewModel::toggleBookmark,
                     onInteraction = viewModel::onControlsInteraction
                 )
             }
@@ -234,6 +242,7 @@ private fun PdfReaderView(
     uiState: ReaderUiState,
     onPageChanged: (Int) -> Unit,
     onPdfLoaded: (Int) -> Unit,
+    onZoomChanged: (Float) -> Unit,
     onToggleControls: () -> Unit
 ) {
     val backgroundColor = uiState.currentTheme.readerBackgroundColor()
@@ -271,7 +280,7 @@ private fun PdfReaderView(
                     .enableDoubletap(true)
                     .onPageChange { page, _ ->
                         onPageChanged(page)
-                        viewModel.onZoomChanged(pdfView.zoom)
+                        onZoomChanged(pdfView.zoom)
                     }
                     .onLoad { pageCount ->
                         onPdfLoaded(pageCount)
@@ -310,6 +319,9 @@ private fun ReaderControlsOverlay(
     onNavigateBack: () -> Unit,
     onToggleTheme: () -> Unit,
     onGoToPage: (Int) -> Unit,
+    onHighlightClick: (Highlight) -> Unit,
+    onDeleteHighlight: (Highlight) -> Unit,
+    onToggleBookmark: () -> Unit,
     onInteraction: () -> Unit
 ) {
     AnimatedVisibility(
@@ -345,6 +357,9 @@ private fun ReaderControlsOverlay(
                 uiState = uiState,
                 onNavigateBack = onNavigateBack,
                 onToggleTheme = onToggleTheme,
+                onHighlightClick = onHighlightClick,
+                onDeleteHighlight = onDeleteHighlight,
+                onToggleBookmark = onToggleBookmark,
                 onInteraction = onInteraction
             )
 
@@ -364,6 +379,9 @@ private fun ReaderTopControls(
     uiState: ReaderUiState,
     onNavigateBack: () -> Unit,
     onToggleTheme: () -> Unit,
+    onHighlightClick: (Highlight) -> Unit,
+    onDeleteHighlight: (Highlight) -> Unit,
+    onToggleBookmark: () -> Unit,
     onInteraction: () -> Unit
 ) {
     val containerColor = uiState.currentTheme.readerControlsContainerColor()
@@ -408,8 +426,8 @@ private fun ReaderTopControls(
                 com.luminar.reader.presentation.components.HighlightsPanel(
                     highlights = uiState.highlights,
                     onDismiss = { showPanel = false },
-                    onHighlightClick = { h -> h.pdfPage?.let { viewModel.onEvent(ReaderEvent.GoToPage(it)) } },
-                    onDeleteHighlight = viewModel::deleteHighlight
+                    onHighlightClick = onHighlightClick,
+                    onDeleteHighlight = onDeleteHighlight
                 )
             }
 
@@ -417,7 +435,7 @@ private fun ReaderTopControls(
                 Icon(painter = painterResource(R.drawable.ic_auto_stories_48), contentDescription = "Highlights", tint = LuminarGold)
             }
 
-            IconButton(onClick = { onInteraction(); viewModel.toggleBookmark() }) {
+            IconButton(onClick = { onInteraction(); onToggleBookmark() }) {
                 Icon(
                     painter = painterResource(if (uiState.isBookmarked) R.drawable.ic_auto_stories_48 else R.drawable.ic_add_24),
                     contentDescription = "Bookmark",

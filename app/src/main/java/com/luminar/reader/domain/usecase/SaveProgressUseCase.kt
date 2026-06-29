@@ -11,13 +11,15 @@ class SaveProgressUseCase @Inject constructor(
         bookId: Long,
         currentPage: Int,
         scrollOffset: Float = 0f,
-        epubCfi: String? = null
+        epubCfi: String? = null,
+        zoomLevel: Float = 1.0f
     ) {
         bookRepository.saveProgress(
             bookId = bookId,
             currentPage = currentPage,
             scrollOffset = scrollOffset,
-            epubCfi = epubCfi
+            epubCfi = epubCfi,
+            zoomLevel = zoomLevel
         )
     }
 }

@@ -25,6 +25,7 @@ import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.rememberDrawerState
 import com.luminar.reader.presentation.components.TocDrawer
+import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -36,8 +37,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -154,14 +157,15 @@ fun EpubReaderScreen(
                     onToggleControls = { viewModel.onEvent(ReaderEvent.ToggleControls) }
                 )
 
-                if (uiState.dictWord != null) {
+                val dictWord = uiState.dictWord
+                if (dictWord != null) {
                     com.luminar.reader.presentation.components.DictionaryBottomSheet(
-                        word = uiState.dictWord,
+                        word = dictWord,
                         entry = uiState.dictEntry,
                         isLoading = uiState.isDictLoading,
                         isErrorOffline = uiState.isDictOfflineError,
                         onDismiss = viewModel::dismissDict,
-                        onRetry = { viewModel.lookupWord(uiState.dictWord) }
+                        onRetry = { viewModel.lookupWord(dictWord) }
                     )
                 }
 

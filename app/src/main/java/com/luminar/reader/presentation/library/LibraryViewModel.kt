@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.luminar.reader.data.model.Book
+import com.luminar.reader.data.model.BookFormat
 import com.luminar.reader.data.model.ReadingProgress
 import com.luminar.reader.data.repository.BookRepository
 import com.luminar.reader.domain.usecase.GetBooksUseCase
@@ -37,8 +38,6 @@ sealed interface LibraryEvent {
     data class DeleteBook(val book: Book) : LibraryEvent
     data class OpenBook(val book: Book) : LibraryEvent
 }
-
-import com.luminar.reader.data.model.BookFormat
 
 sealed interface LibraryEffect {
     data class NavigateToReader(val bookId: Long) : LibraryEffect
