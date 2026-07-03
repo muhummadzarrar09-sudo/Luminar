@@ -14,11 +14,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.luminar.reader.presentation.library.LibraryScreen
-import com.luminar.reader.presentation.reader.EpubReaderScreen
 import com.luminar.reader.presentation.reader.ReaderScreen
-import com.luminar.reader.presentation.search.SearchScreen
 import com.luminar.reader.presentation.settings.SettingsScreen
-import com.luminar.reader.presentation.stats.StatsScreen
 
 private const val NAV_ANIMATION_DURATION_MILLIS = 300
 
@@ -72,21 +69,6 @@ fun LuminarNavGraph(
             LibraryScreen(
                 onOpenBook = { bookId ->
                     navController.navigate(Screen.Reader.createRoute(bookId)) {
-                        launchSingleTop = true
-                    }
-                },
-                onOpenEpubBook = { bookId ->
-                    navController.navigate(Screen.EpubReader.createRoute(bookId)) {
-                        launchSingleTop = true
-                    }
-                },
-                onOpenSearch = {
-                    navController.navigate(Screen.Search.createRoute()) {
-                        launchSingleTop = true
-                    }
-                },
-                onOpenStats = {
-                    navController.navigate(Screen.Stats.route) {
                         launchSingleTop = true
                     }
                 },
@@ -148,19 +130,6 @@ fun LuminarNavGraph(
         }
 
         composable(
-            route = Screen.EpubReader.route,
-            arguments = listOf(
-                navArgument(Screen.EpubReader.BOOK_ID_ARG) {
-                    type = NavType.LongType
-                }
-            )
-        ) {
-            EpubReaderScreen(
-                onNavigateBack = { navController.navigateUp() }
-            )
-        }
-
-        composable(
             route = Screen.Settings.route,
             enterTransition = {
                 slideIntoContainer(
@@ -202,28 +171,6 @@ fun LuminarNavGraph(
             SettingsScreen(
                 onNavigateBack = { navController.navigateUp() }
             )
-        }
-
-        composable(
-            route = Screen.Search.route,
-            arguments = listOf(
-                navArgument("bookId") {
-                    type = NavType.StringType
-                    nullable = true
-                    defaultValue = null
-                }
-            )
-        ) {
-            SearchScreen(
-                onNavigateBack = { navController.navigateUp() },
-                onResultClick = { bookId, page ->
-                    navController.navigate(Screen.Reader.createRoute(bookId))
-                }
-            )
-        }
-
-        composable(route = Screen.Stats.route) {
-            StatsScreen(onNavigateBack = { navController.navigateUp() })
         }
     }
 }

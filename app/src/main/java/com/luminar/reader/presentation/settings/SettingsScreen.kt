@@ -39,6 +39,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.luminar.reader.R
 import com.luminar.reader.data.model.AppTheme
+import com.luminar.reader.data.model.FontScale
+import com.luminar.reader.data.model.ScrollMode
 import com.luminar.reader.presentation.theme.LuminarGold
 import com.luminar.reader.presentation.theme.LuminarTitleFont
 
@@ -148,6 +150,64 @@ fun SettingsScreen(
                         onCheckedChange = {
                             viewModel.onEvent(
                                 SettingsEvent.VolumeButtonsPageTurnChanged(it)
+                            )
+                        }
+                    )
+                }
+            }
+
+            item {
+                SectionHeader(text = "TEXT READER")
+            }
+
+            item {
+                PreferenceGroup {
+                    // Font scale options
+                    FontScale.entries.forEach { scale ->
+                        ThemeOptionRow(
+                            title = scale.displayName,
+                            subtitle = when (scale) {
+                                FontScale.TINY -> "75% — compact reading"
+                                FontScale.SMALL -> "88% — slightly smaller"
+                                FontScale.NORMAL -> "100% — default size"
+                                FontScale.LARGE -> "115% — easier on the eyes"
+                                FontScale.HUGE -> "135% — large text"
+                                FontScale.MASSIVE -> "160% — accessibility"
+                            },
+                            selected = uiState.fontScale == scale,
+                            onClick = {
+                                viewModel.onEvent(SettingsEvent.FontScaleSelected(scale))
+                            }
+                        )
+                        if (scale != FontScale.entries.last()) {
+                            PreferenceDivider()
+                        }
+                    }
+                }
+            }
+
+            item {
+                PreferenceGroup {
+                    ThemeOptionRow(
+                        title = "Vertical scroll",
+                        subtitle = "Continuous scrolling for text files",
+                        selected = uiState.defaultScrollMode == ScrollMode.VERTICAL_SCROLL,
+                        onClick = {
+                            viewModel.onEvent(
+                                SettingsEvent.ScrollModeSelected(ScrollMode.VERTICAL_SCROLL)
+                            )
+                        }
+                    )
+
+                    PreferenceDivider()
+
+                    ThemeOptionRow(
+                        title = "Paged",
+                        subtitle = "Page-by-page like PDF reading",
+                        selected = uiState.defaultScrollMode == ScrollMode.PAGED,
+                        onClick = {
+                            viewModel.onEvent(
+                                SettingsEvent.ScrollModeSelected(ScrollMode.PAGED)
                             )
                         }
                     )

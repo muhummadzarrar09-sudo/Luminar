@@ -37,7 +37,4 @@ interface BookDao {
 
     @Query("UPDATE books SET lastOpenedAt = :timestamp WHERE id = :bookId")
     suspend fun updateLastOpenedAt(bookId: Long, timestamp: Long)
-
-    @Query("UPDATE books SET indexingProgress = :progress WHERE id = :bookId")
-    suspend fun updateIndexingProgress(bookId: Long, progress: Int)
 }

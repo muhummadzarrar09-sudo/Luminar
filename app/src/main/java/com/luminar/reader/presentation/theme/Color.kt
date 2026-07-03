@@ -19,8 +19,3 @@ val LuminarSepiaText = Color(0xFF2E2418)
 val LuminarLightBackground = Color(0xFFFFFFFF)
 val LuminarLightSurface = Color(0xFFF6F6F6)
 val LuminarLightText = Color(0xFF151515)
-
-val HighlightYellow = Color(0xCCF9E04B)
-val HighlightBlue = Color(0xCC4BB8F9)
-val HighlightPink = Color(0xCCF94B8C)
-val HighlightGreen = Color(0xCC4BF97C)

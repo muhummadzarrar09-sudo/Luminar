@@ -11,6 +11,6 @@ class Converters {
 
     @TypeConverter
     fun toBookFormat(value: String): BookFormat {
-        return runCatching { BookFormat.valueOf(value) }.getOrDefault(BookFormat.PDF)
+        return runCatching { BookFormat.valueOf(value) }.getOrDefault(BookFormat.TXT)
     }
 }

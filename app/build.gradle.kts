@@ -28,7 +28,6 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-        isCoreLibraryDesugaringEnabled = true
     }
 
     packaging {
@@ -70,10 +69,6 @@ dependencies {
 
     implementation(libs.android.pdf.viewer)
 
-    implementation(libs.readium.shared)
-    implementation(libs.readium.streamer)
-    implementation(libs.readium.navigator)
-
     implementation(libs.room.runtime)
     implementation(libs.room.ktx)
     ksp(libs.room.compiler)
@@ -87,10 +82,6 @@ dependencies {
     ksp("androidx.hilt:hilt-compiler:1.2.0")
 
     implementation(libs.retrofit)
-    implementation(libs.retrofit.converter.moshi)
     implementation(libs.okhttp)
     implementation(libs.moshi)
-    ksp(libs.moshi.codegen)
-
-    coreLibraryDesugaring(libs.desugar.jdk.libs)
 }

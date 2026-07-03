@@ -24,12 +24,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.DrawerValue
-import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.rememberDrawerState
-import com.luminar.reader.presentation.components.TocDrawer
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -59,6 +59,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -74,7 +77,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.github.barteksc.pdfviewer.PDFView
 import com.luminar.reader.R
 import com.luminar.reader.data.model.AppTheme
-import com.luminar.reader.data.model.Highlight
+import com.luminar.reader.data.model.BookFormat
 import com.luminar.reader.presentation.theme.LuminarGold
 import com.luminar.reader.presentation.theme.next
 import com.luminar.reader.presentation.theme.readerBackgroundColor
@@ -99,18 +102,19 @@ fun ReaderScreen(
 
     DisposableEffect(activity) {
         val window = activity?.window
-        val controller = window?.let {
-            WindowCompat.getInsetsController(it, it.decorView)
-        }
+        val decorView = window?.decorView
+        val controller = if (window != null && decorView != null) {
+            WindowCompat.getInsetsController(window, decorView)
+        } else null
 
-        controller?.hide(WindowInsetsCompat.Type.systemBars())
         controller?.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        controller?.hide(WindowInsetsCompat.Type.systemBars())
 
         onDispose {
-            controller?.show(WindowInsetsCompat.Type.systemBars())
             controller?.systemBarsBehavior =
                 WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
+            controller?.show(WindowInsetsCompat.Type.systemBars())
         }
     }
 
@@ -137,11 +141,8 @@ fun ReaderScreen(
     DisposableEffect(lifecycleOwner.lifecycle) {
         val lifecycle = lifecycleOwner.lifecycle
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_START) {
-                viewModel.startSession()
-            } else if (event == Lifecycle.Event.ON_STOP) {
+            if (event == Lifecycle.Event.ON_STOP) {
                 viewModel.saveCurrentProgressImmediately()
-                viewModel.endSession()
             }
         }
 
@@ -155,24 +156,12 @@ fun ReaderScreen(
     val backgroundColor = uiState.currentTheme.readerBackgroundColor()
     val book = uiState.book
     val file = remember(book?.filePath) { book?.filePath?.let(::File) }
-    val drawerState = rememberDrawerState(DrawerValue.Closed)
 
-    ModalNavigationDrawer(
-        drawerState = drawerState,
-        drawerContent = {
-            TocDrawer(
-                tocItems = uiState.tocItems,
-                onItemClick = { item ->
-                    item.pageNumber?.let { viewModel.onEvent(ReaderEvent.GoToPage(it)) }
-                }
-            )
-        }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(backgroundColor)
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(backgroundColor)
-        ) {
         when {
             uiState.isLoading -> {
                 CircularProgressIndicator(
@@ -196,18 +185,49 @@ fun ReaderScreen(
             }
 
             else -> {
-                PdfReaderView(
-                    file = file,
-                    uiState = uiState,
-                    onPageChanged = { page ->
-                        viewModel.onEvent(ReaderEvent.PageChanged(page))
-                    },
-                    onPdfLoaded = viewModel::onPdfLoaded,
-                    onZoomChanged = viewModel::onZoomChanged,
-                    onToggleControls = {
-                        viewModel.onEvent(ReaderEvent.ToggleControls)
+                if (uiState.isEpub || uiState.isTextBased) {
+                    val textContent = uiState.textContent
+                    if (textContent != null) {
+                        TextReaderView(
+                            content = textContent,
+                            format = if (uiState.isEpub) BookFormat.MARKDOWN else book.format,
+                            theme = uiState.currentTheme,
+                            fontScale = uiState.fontScale,
+                            searchQuery = uiState.searchQuery,
+                            isSearchActive = uiState.isSearchActive,
+                            currentMatchBlockIndex = if (uiState.currentMatchIndex >= 0 && uiState.searchMatchBlockIndices.isNotEmpty()) {
+                                uiState.searchMatchBlockIndices[uiState.currentMatchIndex]
+                            } else null,
+                            scrollToBlockIndex = uiState.scrollToBlockIndex,
+                            onToggleControls = {
+                                viewModel.onEvent(ReaderEvent.ToggleControls)
+                            },
+                            onScrollPositionChanged = { position ->
+                                viewModel.onEvent(ReaderEvent.ScrollPositionChanged(position))
+                            },
+                            onBlocksParsed = viewModel::onBlocksParsed,
+                            onScrollToBlockConsumed = viewModel::consumeScrollToBlock,
+                            initialScrollPosition = uiState.scrollPosition
+                        )
+                    } else {
+                        CircularProgressIndicator(
+                            modifier = Modifier.align(Alignment.Center),
+                            color = LuminarGold
+                        )
                     }
-                )
+                } else {
+                    PdfReaderView(
+                        file = file,
+                        uiState = uiState,
+                        onPageChanged = { page ->
+                            viewModel.onEvent(ReaderEvent.PageChanged(page))
+                        },
+                        onPdfLoaded = viewModel::onPdfLoaded,
+                        onToggleControls = {
+                            viewModel.onEvent(ReaderEvent.ToggleControls)
+                        }
+                    )
+                }
 
                 ReaderControlsOverlay(
                     uiState = uiState,
@@ -223,15 +243,29 @@ fun ReaderScreen(
                     onGoToPage = { page ->
                         viewModel.onEvent(ReaderEvent.GoToPage(page))
                     },
-                    onHighlightClick = { h ->
-                        h.pdfPage?.let { viewModel.onEvent(ReaderEvent.GoToPage(it)) }
+                    onIncreaseFontSize = {
+                        viewModel.onEvent(ReaderEvent.IncreaseFontSize)
                     },
-                    onDeleteHighlight = viewModel::deleteHighlight,
-                    onToggleBookmark = viewModel::toggleBookmark,
+                    onDecreaseFontSize = {
+                        viewModel.onEvent(ReaderEvent.DecreaseFontSize)
+                    },
+                    onOpenSearch = {
+                        viewModel.onEvent(ReaderEvent.OpenSearch)
+                    },
                     onInteraction = viewModel::onControlsInteraction
                 )
+
+                // Search bar overlay (independent of controls visibility)
+                if (uiState.isSearchActive) {
+                    SearchBar(
+                        uiState = uiState,
+                        onQueryChanged = { viewModel.onEvent(ReaderEvent.UpdateSearchQuery(it)) },
+                        onNextMatch = { viewModel.onEvent(ReaderEvent.NextMatch) },
+                        onPreviousMatch = { viewModel.onEvent(ReaderEvent.PreviousMatch) },
+                        onClose = { viewModel.onEvent(ReaderEvent.CloseSearch) }
+                    )
+                }
             }
-        }
         }
     }
 }
@@ -242,7 +276,6 @@ private fun PdfReaderView(
     uiState: ReaderUiState,
     onPageChanged: (Int) -> Unit,
     onPdfLoaded: (Int) -> Unit,
-    onZoomChanged: (Float) -> Unit,
     onToggleControls: () -> Unit
 ) {
     val backgroundColor = uiState.currentTheme.readerBackgroundColor()
@@ -280,11 +313,9 @@ private fun PdfReaderView(
                     .enableDoubletap(true)
                     .onPageChange { page, _ ->
                         onPageChanged(page)
-                        onZoomChanged(pdfView.zoom)
                     }
                     .onLoad { pageCount ->
                         onPdfLoaded(pageCount)
-                        pdfView.postDelayed({ pdfView.zoomTo(uiState.savedZoom) }, 100)
                     }
                     .onTap { event ->
                         if (pdfView.isCenterTap(event)) {
@@ -319,9 +350,9 @@ private fun ReaderControlsOverlay(
     onNavigateBack: () -> Unit,
     onToggleTheme: () -> Unit,
     onGoToPage: (Int) -> Unit,
-    onHighlightClick: (Highlight) -> Unit,
-    onDeleteHighlight: (Highlight) -> Unit,
-    onToggleBookmark: () -> Unit,
+    onIncreaseFontSize: () -> Unit,
+    onDecreaseFontSize: () -> Unit,
+    onOpenSearch: () -> Unit,
     onInteraction: () -> Unit
 ) {
     AnimatedVisibility(
@@ -357,9 +388,7 @@ private fun ReaderControlsOverlay(
                 uiState = uiState,
                 onNavigateBack = onNavigateBack,
                 onToggleTheme = onToggleTheme,
-                onHighlightClick = onHighlightClick,
-                onDeleteHighlight = onDeleteHighlight,
-                onToggleBookmark = onToggleBookmark,
+                onOpenSearch = onOpenSearch,
                 onInteraction = onInteraction
             )
 
@@ -367,6 +396,8 @@ private fun ReaderControlsOverlay(
                 modifier = Modifier.align(Alignment.BottomCenter),
                 uiState = uiState,
                 onGoToPage = onGoToPage,
+                onIncreaseFontSize = onIncreaseFontSize,
+                onDecreaseFontSize = onDecreaseFontSize,
                 onInteraction = onInteraction
             )
         }
@@ -379,9 +410,7 @@ private fun ReaderTopControls(
     uiState: ReaderUiState,
     onNavigateBack: () -> Unit,
     onToggleTheme: () -> Unit,
-    onHighlightClick: (Highlight) -> Unit,
-    onDeleteHighlight: (Highlight) -> Unit,
-    onToggleBookmark: () -> Unit,
+    onOpenSearch: () -> Unit,
     onInteraction: () -> Unit
 ) {
     val containerColor = uiState.currentTheme.readerControlsContainerColor()
@@ -412,35 +441,37 @@ private fun ReaderTopControls(
                 )
             }
 
-            Text(
-                text = uiState.book?.title.orEmpty(),
-                modifier = Modifier.weight(1f),
-                color = contentColor,
-                style = MaterialTheme.typography.titleMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-
-            var showPanel by remember { mutableStateOf(false) }
-            if (showPanel) {
-                com.luminar.reader.presentation.components.HighlightsPanel(
-                    highlights = uiState.highlights,
-                    onDismiss = { showPanel = false },
-                    onHighlightClick = onHighlightClick,
-                    onDeleteHighlight = onDeleteHighlight
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = uiState.book?.title.orEmpty(),
+                    color = contentColor,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
+                if (uiState.isTextBased || uiState.isEpub) {
+                    Text(
+                        text = uiState.book?.format?.displayName.orEmpty(),
+                        color = contentColor.copy(alpha = 0.55f),
+                        fontSize = 11.sp,
+                        maxLines = 1
+                    )
+                }
             }
 
-            IconButton(onClick = { onInteraction(); showPanel = true }) {
-                Icon(painter = painterResource(R.drawable.ic_auto_stories_48), contentDescription = "Highlights", tint = LuminarGold)
-            }
-
-            IconButton(onClick = { onInteraction(); onToggleBookmark() }) {
-                Icon(
-                    painter = painterResource(if (uiState.isBookmarked) R.drawable.ic_auto_stories_48 else R.drawable.ic_add_24),
-                    contentDescription = "Bookmark",
-                    tint = if (uiState.isBookmarked) LuminarGold else contentColor
-                )
+            if (uiState.isTextBased || uiState.isEpub) {
+                IconButton(
+                    onClick = {
+                        onInteraction()
+                        onOpenSearch()
+                    }
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_search_24),
+                        contentDescription = "Search",
+                        tint = contentColor
+                    )
+                }
             }
 
             TextButton(
@@ -471,6 +502,8 @@ private fun ReaderBottomControls(
     modifier: Modifier,
     uiState: ReaderUiState,
     onGoToPage: (Int) -> Unit,
+    onIncreaseFontSize: () -> Unit,
+    onDecreaseFontSize: () -> Unit,
     onInteraction: () -> Unit
 ) {
     val containerColor = uiState.currentTheme.readerControlsContainerColor()
@@ -509,7 +542,51 @@ private fun ReaderBottomControls(
                 .padding(horizontal = 18.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+            if (uiState.isTextBased || uiState.isEpub) {
+                // Font size controls
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    // Font size decrease
+                    TextButton(
+                        onClick = {
+                            onInteraction()
+                            onDecreaseFontSize()
+                        },
+                        colors = ButtonDefaults.textButtonColors(contentColor = contentColor)
+                    ) {
+                        Text(text = "A−", fontSize = 14.sp)
+                    }
+
+                    // Current font size label
+                    Text(
+                        text = "Font: ${uiState.fontScale.displayName}",
+                        color = contentColor,
+                        style = MaterialTheme.typography.labelLarge
+                    )
+
+                    // Font size increase
+                    TextButton(
+                        onClick = {
+                            onInteraction()
+                            onIncreaseFontSize()
+                        },
+                        colors = ButtonDefaults.textButtonColors(contentColor = contentColor)
+                    ) {
+                        Text(text = "A+", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                // Word / char count
+                Text(
+                    text = "${formatCount(uiState.wordCount)} words  ·  ${formatCount(uiState.charCount)} chars",
+                    modifier = Modifier.padding(bottom = 2.dp),
+                    color = contentColor.copy(alpha = 0.5f),
+                    fontSize = 12.sp
+                )
+            } else {
                 TextButton(
                     onClick = {
                         onInteraction()
@@ -522,33 +599,26 @@ private fun ReaderBottomControls(
                         style = MaterialTheme.typography.labelLarge
                     )
                 }
-                if (uiState.todayMinutes > 0) {
-                    Text(
-                        text = "${uiState.todayMinutes} min today",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = LuminarGold
-                    )
-                }
-            }
 
-            Slider(
-                value = sliderPage.coerceIn(0f, sliderMax.toFloat()),
-                onValueChange = { value ->
-                    sliderPage = value
-                    onInteraction()
-                },
-                onValueChangeFinished = {
-                    val page = sliderPage.roundToInt().coerceIn(0, maxPage)
-                    onGoToPage(page)
-                },
-                valueRange = 0f..sliderMax.toFloat(),
-                enabled = uiState.totalPages > 1,
-                colors = SliderDefaults.colors(
-                    thumbColor = LuminarGold,
-                    activeTrackColor = LuminarGold,
-                    inactiveTrackColor = contentColor.copy(alpha = 0.22f)
+                Slider(
+                    value = sliderPage.coerceIn(0f, sliderMax.toFloat()),
+                    onValueChange = { value ->
+                        sliderPage = value
+                        onInteraction()
+                    },
+                    onValueChangeFinished = {
+                        val page = sliderPage.roundToInt().coerceIn(0, maxPage)
+                        onGoToPage(page)
+                    },
+                    valueRange = 0f..sliderMax.toFloat(),
+                    enabled = uiState.totalPages > 1,
+                    colors = SliderDefaults.colors(
+                        thumbColor = LuminarGold,
+                        activeTrackColor = LuminarGold,
+                        inactiveTrackColor = contentColor.copy(alpha = 0.22f)
+                    )
                 )
-            )
+            }
         }
     }
 }
@@ -642,6 +712,111 @@ private fun ReaderMessage(
     }
 }
 
+@Composable
+private fun SearchBar(
+    uiState: ReaderUiState,
+    onQueryChanged: (String) -> Unit,
+    onNextMatch: () -> Unit,
+    onPreviousMatch: () -> Unit,
+    onClose: () -> Unit
+) {
+    val containerColor = uiState.currentTheme.readerControlsContainerColor()
+    val contentColor = uiState.currentTheme.readerControlsContentColor()
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .statusBarsPadding(),
+        color = containerColor,
+        contentColor = contentColor
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Search text field
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .background(
+                        contentColor.copy(alpha = 0.08f),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+                    )
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
+            ) {
+                if (uiState.searchQuery.isEmpty()) {
+                    Text(
+                        text = "Search in document…",
+                        color = contentColor.copy(alpha = 0.4f),
+                        fontSize = 14.sp
+                    )
+                }
+                BasicTextField(
+                    value = uiState.searchQuery,
+                    onValueChange = onQueryChanged,
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = TextStyle(
+                        color = contentColor,
+                        fontSize = 14.sp
+                    ),
+                    singleLine = true,
+                    cursorBrush = SolidColor(LuminarGold),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { onNextMatch() })
+                )
+            }
+
+            // Match count
+            if (uiState.matchLabel.isNotEmpty()) {
+                Text(
+                    text = uiState.matchLabel,
+                    modifier = Modifier.padding(horizontal = 8.dp),
+                    color = if (uiState.matchCount == 0) contentColor.copy(alpha = 0.4f)
+                            else LuminarGold,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+
+            // Previous match
+            IconButton(
+                onClick = onPreviousMatch,
+                enabled = uiState.matchCount > 0
+            ) {
+                Text(
+                    text = "▲",
+                    color = if (uiState.matchCount > 0) contentColor else contentColor.copy(alpha = 0.25f),
+                    fontSize = 14.sp
+                )
+            }
+
+            // Next match
+            IconButton(
+                onClick = onNextMatch,
+                enabled = uiState.matchCount > 0
+            ) {
+                Text(
+                    text = "▼",
+                    color = if (uiState.matchCount > 0) contentColor else contentColor.copy(alpha = 0.25f),
+                    fontSize = 14.sp
+                )
+            }
+
+            // Close search
+            IconButton(onClick = onClose) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_close_24),
+                    contentDescription = "Close search",
+                    modifier = Modifier.size(20.dp),
+                    tint = contentColor
+                )
+            }
+        }
+    }
+}
+
 private fun PDFView.isCenterTap(event: MotionEvent): Boolean {
     if (width == 0 || height == 0) return true
 
@@ -666,5 +841,13 @@ private fun AppTheme.shortLabel(): String {
         AppTheme.DARK_AMOLED -> "AMOLED"
         AppTheme.SEPIA -> "Sepia"
         AppTheme.LIGHT -> "Light"
+    }
+}
+
+private fun formatCount(count: Int): String {
+    return when {
+        count >= 1_000_000 -> String.format("%.1fM", count / 1_000_000.0)
+        count >= 1_000 -> String.format("%.1fK", count / 1_000.0)
+        else -> count.toString()
     }
 }

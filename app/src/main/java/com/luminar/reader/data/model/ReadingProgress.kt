@@ -24,7 +24,5 @@ data class ReadingProgress(
     @PrimaryKey val bookId: Long,
     val currentPage: Int = 0,
     val scrollOffset: Float = 0f,
-    val lastReadAt: Long = System.currentTimeMillis(),
-    val epubCfi: String? = null,
-    val lastZoomLevel: Float = 1.0f
+    val lastReadAt: Long = System.currentTimeMillis()
 )
