@@ -27,19 +27,16 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -58,7 +55,6 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -72,7 +68,6 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -117,17 +112,6 @@ fun LibraryScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val haptics = LocalHapticFeedback.current
     val gridState = rememberLazyGridState()
-
-    // FAB visibility — hide when scrolling down
-    val isFabVisible by remember {
-        derivedStateOf {
-            val layoutInfo = gridState.layoutInfo
-            if (layoutInfo.visibleItemsInfo.isEmpty()) true
-            else gridState.firstVisibleItemScrollOffset <= 0 ||
-                !gridState.isScrollInProgress ||
-                gridState.firstVisibleItemIndex < 2
-        }
-    }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
@@ -188,7 +172,7 @@ fun LibraryScreen(
                             text = "Luminar",
                             fontFamily = LuminarTitleFont,
                             fontWeight = FontWeight.SemiBold,
-                            fontSize = 30.sp,
+                            fontSize = 26.sp,
                             color = MaterialTheme.colorScheme.onBackground
                         )
                     }
@@ -203,35 +187,6 @@ fun LibraryScreen(
                             color = LuminarGold
                         )
                     }
-
-                    // Search toggle
-                    IconButton(onClick = { viewModel.onEvent(LibraryEvent.ToggleSearch) }) {
-                        Icon(
-                            painter = painterResource(
-                                if (uiState.isSearchActive) R.drawable.ic_close_24
-                                else R.drawable.ic_search_24
-                            ),
-                            contentDescription = if (uiState.isSearchActive) "Close search" else "Search",
-                            tint = MaterialTheme.colorScheme.onBackground
-                        )
-                    }
-
-                    // Grid/List toggle
-                    IconButton(onClick = { viewModel.onEvent(LibraryEvent.ToggleViewMode) }) {
-                        Text(
-                            text = if (uiState.viewMode == ViewMode.GRID) "☰" else "⊞",
-                            color = MaterialTheme.colorScheme.onBackground,
-                            fontSize = 18.sp
-                        )
-                    }
-
-                    IconButton(onClick = onOpenSettings) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_settings_24),
-                            contentDescription = "Settings",
-                            tint = MaterialTheme.colorScheme.onBackground
-                        )
-                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
@@ -240,27 +195,18 @@ fun LibraryScreen(
                 )
             )
         },
-        floatingActionButton = {
-            AnimatedVisibility(
-                visible = isFabVisible,
-                enter = slideInVertically(initialOffsetY = { it * 2 }) + fadeIn(),
-                exit = slideOutVertically(targetOffsetY = { it * 2 }) + fadeOut()
-            ) {
-                FloatingActionButton(
-                    onClick = {
-                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        filePickerLauncher.launch(BookFormat.IMPORTABLE_MIME_TYPES)
-                    },
-                    containerColor = LuminarGold,
-                    contentColor = Color(0xFF171100)
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_add_24),
-                        contentDescription = "Import file"
-                    )
+        bottomBar = {
+            LibraryBottomBar(
+                uiState = uiState,
+                onToggleSearch = { viewModel.onEvent(LibraryEvent.ToggleSearch) },
+                onToggleViewMode = { viewModel.onEvent(LibraryEvent.ToggleViewMode) },
+                onOpenSettings = onOpenSettings,
+                onImport = {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    filePickerLauncher.launch(BookFormat.IMPORTABLE_MIME_TYPES)
                 }
-            }
-        }
+            )
+        },
     ) { innerPadding ->
         Column(
             modifier = Modifier
@@ -268,6 +214,35 @@ fun LibraryScreen(
                 .padding(innerPadding)
                 .background(MaterialTheme.colorScheme.background)
         ) {
+            // Continue Reading hero card
+            if (!uiState.isLoading && uiState.allBooks.isNotEmpty()) {
+                val lastBook = uiState.allBooks
+                    .filter { it.lastOpenedAt != null }
+                    .maxByOrNull { it.lastOpenedAt ?: 0 }
+
+                if (lastBook != null) {
+                    ContinueReadingCard(
+                        book = lastBook,
+                        progress = uiState.progressByBookId[lastBook.id]
+                            .progressFraction(lastBook.totalPages),
+                        onClick = { viewModel.onEvent(LibraryEvent.OpenBook(lastBook)) }
+                    )
+                }
+
+                // Recently opened row (up to 6 books, excluding the "continue" book)
+                val recentBooks = uiState.allBooks
+                    .filter { it.lastOpenedAt != null && it.id != lastBook?.id }
+                    .sortedByDescending { it.lastOpenedAt }
+                    .take(6)
+
+                if (recentBooks.isNotEmpty()) {
+                    RecentlyOpenedRow(
+                        books = recentBooks,
+                        onBookClick = { viewModel.onEvent(LibraryEvent.OpenBook(it)) }
+                    )
+                }
+            }
+
             // Filter chips + sort — only show when library has items
             if (uiState.allBooks.isNotEmpty()) {
                 LibraryToolbar(
@@ -334,6 +309,300 @@ fun LibraryScreen(
                 }
             }
         }
+    }
+}
+
+// ─── Search field ────────────────────────────────────────────
+
+// ─── Continue Reading + Recent ────────────────────────────
+
+@Composable
+private fun ContinueReadingCard(
+    book: Book,
+    progress: Float,
+    onClick: () -> Unit
+) {
+    val coverFile = remember(book.coverPath) {
+        book.coverPath?.let(::File)?.takeIf { it.exists() }
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Cover thumbnail
+            Box(
+                modifier = Modifier
+                    .size(width = 48.dp, height = 64.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(LuminarGold.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (coverFile != null) {
+                    AsyncImage(
+                        model = coverFile,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                } else {
+                    Text(
+                        text = book.title.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
+                        color = LuminarGold,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.width(14.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Continue reading",
+                    color = LuminarGold,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = book.title,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                // Progress bar
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(progress.coerceIn(0f, 1f))
+                            .fillMaxHeight()
+                            .background(LuminarGold, RoundedCornerShape(2.dp))
+                    )
+                }
+                Text(
+                    text = "${(progress * 100).toInt()}% · ${book.format.displayName}",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(top = 3.dp)
+                )
+            }
+
+            // Arrow
+            Text(
+                text = "→",
+                color = LuminarGold,
+                fontSize = 20.sp,
+                modifier = Modifier.padding(start = 8.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun RecentlyOpenedRow(
+    books: List<Book>,
+    onBookClick: (Book) -> Unit
+) {
+    Column(modifier = Modifier.padding(top = 4.dp)) {
+        Text(
+            text = "Recently opened",
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            books.forEach { book ->
+                val coverFile = remember(book.coverPath) {
+                    book.coverPath?.let(::File)?.takeIf { it.exists() }
+                }
+
+                Card(
+                    modifier = Modifier
+                        .width(56.dp)
+                        .clickable { onBookClick(book) },
+                    shape = RoundedCornerShape(8.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surface
+                    )
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(width = 56.dp, height = 76.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(LuminarGold.copy(alpha = 0.12f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (coverFile != null) {
+                            AsyncImage(
+                                model = coverFile,
+                                contentDescription = book.title,
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop
+                            )
+                        } else {
+                            Text(
+                                text = book.title.firstOrNull()?.uppercaseChar()?.toString() ?: "?",
+                                color = LuminarGold,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ─── Bottom navigation bar ───────────────────────────────
+
+@Composable
+private fun LibraryBottomBar(
+    uiState: LibraryUiState,
+    onToggleSearch: () -> Unit,
+    onToggleViewMode: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onImport: () -> Unit
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 3.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Search
+            BottomBarItem(
+                icon = {
+                    Icon(
+                        painter = painterResource(
+                            if (uiState.isSearchActive) R.drawable.ic_close_24
+                            else R.drawable.ic_search_24
+                        ),
+                        contentDescription = "Search",
+                        modifier = Modifier.size(22.dp)
+                    )
+                },
+                label = if (uiState.isSearchActive) "Close" else "Search",
+                isActive = uiState.isSearchActive,
+                onClick = onToggleSearch
+            )
+
+            // View toggle
+            BottomBarItem(
+                icon = {
+                    Text(
+                        text = if (uiState.viewMode == ViewMode.GRID) "☰" else "⊞",
+                        fontSize = 20.sp
+                    )
+                },
+                label = if (uiState.viewMode == ViewMode.GRID) "List" else "Grid",
+                onClick = onToggleViewMode
+            )
+
+            // Import (center, prominent)
+            BottomBarItem(
+                icon = {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .background(LuminarGold, shape = androidx.compose.foundation.shape.CircleShape)
+                            .padding(8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_add_24),
+                            contentDescription = "Import",
+                            tint = Color(0xFF171100),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                },
+                label = "Import",
+                onClick = onImport
+            )
+
+            // View toggle (placeholder for future stats)
+            BottomBarItem(
+                icon = {
+                    Text(text = "📊", fontSize = 20.sp)
+                },
+                label = "Stats",
+                onClick = onOpenSettings // for now, opens settings where stats live
+            )
+
+            // Settings
+            BottomBarItem(
+                icon = {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_settings_24),
+                        contentDescription = "Settings",
+                        modifier = Modifier.size(22.dp)
+                    )
+                },
+                label = "Settings",
+                onClick = onOpenSettings
+            )
+        }
+    }
+}
+
+@Composable
+private fun BottomBarItem(
+    icon: @Composable () -> Unit,
+    label: String,
+    isActive: Boolean = false,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        icon()
+        Text(
+            text = label,
+            color = if (isActive) LuminarGold else MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 10.sp,
+            fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
+            maxLines = 1
+        )
     }
 }
 

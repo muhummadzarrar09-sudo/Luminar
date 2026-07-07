@@ -4,11 +4,18 @@ package com.luminar.reader.presentation.reader
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -79,6 +86,7 @@ fun TextReaderView(
                 is TextBlock.NumberedItem -> block.spans.text
                 is TextBlock.Quote -> block.spans.text
                 is TextBlock.PlainLine -> block.text
+                is TextBlock.Table -> (block.headers + block.rows.flatten()).joinToString(" ")
                 TextBlock.Divider -> ""
             }
         }
@@ -158,6 +166,7 @@ internal sealed interface TextBlock {
     data class BulletItem(val spans: AnnotatedString, val indent: Int = 0) : TextBlock
     data class NumberedItem(val number: String, val spans: AnnotatedString) : TextBlock
     data class Quote(val spans: AnnotatedString) : TextBlock
+    data class Table(val headers: List<String>, val rows: List<List<String>>) : TextBlock
     data object Divider : TextBlock
     data class PlainLine(val text: String) : TextBlock
 }
@@ -292,6 +301,81 @@ private fun RenderBlock(
                         fontStyle = FontStyle.Italic,
                         lineHeight = 22.sp * scale
                     )
+                }
+            }
+        }
+
+        is TextBlock.Table -> {
+            val borderColor = textColor.copy(alpha = 0.2f)
+            val headerBg = LuminarGold.copy(alpha = 0.1f)
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp)
+                    .border(1.dp, borderColor, androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+            ) {
+                // Header row
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(headerBg)
+                        .height(IntrinsicSize.Min)
+                ) {
+                    block.headers.forEachIndexed { idx, header ->
+                        Text(
+                            text = header,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(8.dp),
+                            color = LuminarGold,
+                            fontSize = 13.sp * scale,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 3
+                        )
+                        if (idx < block.headers.lastIndex) {
+                            Box(
+                                modifier = Modifier
+                                    .width(1.dp)
+                                    .height(IntrinsicSize.Max)
+                                    .background(borderColor)
+                            )
+                        }
+                    }
+                }
+                // Separator
+                HorizontalDivider(color = borderColor)
+                // Data rows
+                block.rows.forEachIndexed { rowIdx, row ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(IntrinsicSize.Min)
+                    ) {
+                        row.forEachIndexed { idx, cell ->
+                            Text(
+                                text = cell,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(8.dp),
+                                color = textColor,
+                                fontSize = 12.sp * scale,
+                                maxLines = 5
+                            )
+                            if (idx < row.lastIndex) {
+                                Box(
+                                    modifier = Modifier
+                                        .width(1.dp)
+                                        .height(IntrinsicSize.Max)
+                                        .background(borderColor)
+                                )
+                            }
+                        }
+                    }
+                    if (rowIdx < block.rows.lastIndex) {
+                        HorizontalDivider(color = borderColor.copy(alpha = 0.1f))
+                    }
                 }
             }
         }
@@ -437,6 +521,27 @@ private fun parseMarkdownBlocks(source: String): List<TextBlock> {
                 }
                 i++
             }
+            // Markdown table
+            trimmed.startsWith("|") && trimmed.endsWith("|") -> {
+                val tableRows = mutableListOf<List<String>>()
+                while (i < lines.size) {
+                    val tLine = lines[i].trim()
+                    if (!tLine.startsWith("|")) break
+                    // Skip separator rows (| --- | --- |)
+                    if (tLine.contains("---")) { i++; continue }
+                    val cells = tLine.split("|")
+                        .map { it.trim() }
+                        .filter { it.isNotEmpty() }
+                    if (cells.isNotEmpty()) tableRows.add(cells)
+                    i++
+                }
+                if (tableRows.size >= 1) {
+                    val headers = tableRows[0]
+                    val data = if (tableRows.size > 1) tableRows.subList(1, tableRows.size) else emptyList()
+                    blocks.add(TextBlock.Table(headers, data))
+                }
+            }
+
             trimmed.isEmpty() -> { i++ }
             else -> {
                 val paraLines = mutableListOf<String>()

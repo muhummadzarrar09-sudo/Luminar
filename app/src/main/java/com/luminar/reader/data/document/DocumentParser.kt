@@ -154,27 +154,135 @@ class DocumentParser @Inject constructor() {
     private fun docxXmlToText(xml: String): String {
         val sb = StringBuilder()
 
-        for (pMatch in PARAGRAPH.findAll(xml)) {
+        // ── Extract tables first and replace with placeholders ──
+        val tableRegex = Regex("<w:tbl>[\\s\\S]*?</w:tbl>", RegexOption.DOT_MATCHES_ALL)
+        val tables = mutableListOf<String>()
+        var processedXml = tableRegex.replace(xml) { match ->
+            tables.add(parseDocxTable(match.value))
+            "\n%%TABLE_${tables.size - 1}%%\n"
+        }
+
+        // ── Process paragraphs ──
+        for (pMatch in PARAGRAPH.findAll(processedXml)) {
             val paragraph = pMatch.value
+
+            // Check for heading style
             val headingLevel = HEADING_STYLE
                 .find(paragraph)?.groupValues?.get(1)?.toIntOrNull()
-            val textRuns = TEXT_RUN
-                .findAll(paragraph)
-                .map { it.groupValues[1] }
-                .joinToString("")
 
-            if (textRuns.isNotBlank()) {
-                if (headingLevel != null) {
-                    val prefix = "#".repeat(headingLevel.coerceIn(1, 6))
-                    sb.appendLine("$prefix $textRuns")
-                } else {
-                    sb.appendLine(textRuns)
+            // Check for list (numbered or bullet)
+            val isListItem = paragraph.contains("<w:numPr")
+            val listLevel = Regex("""<w:ilvl\s+w:val="(\d+)"""")
+                .find(paragraph)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+
+            // Extract runs with inline formatting
+            val formattedText = extractDocxRuns(paragraph)
+
+            if (formattedText.isNotBlank()) {
+                when {
+                    headingLevel != null -> {
+                        val prefix = "#".repeat(headingLevel.coerceIn(1, 6))
+                        sb.appendLine("$prefix $formattedText")
+                    }
+                    isListItem -> {
+                        val indent = "  ".repeat(listLevel)
+                        sb.appendLine("${indent}- $formattedText")
+                    }
+                    else -> {
+                        sb.appendLine(formattedText)
+                    }
                 }
                 sb.appendLine()
             }
         }
 
-        return sb.toString().trim().ifBlank { "(Empty document)" }
+        // ── Re-insert tables ──
+        var result = sb.toString()
+        for ((index, table) in tables.withIndex()) {
+            result = result.replace("%%TABLE_$index%%", table)
+        }
+
+        return result.trim().ifBlank { "(Empty document)" }
+    }
+
+    /**
+     * Extract text runs from a DOCX paragraph, preserving bold/italic/underline.
+     */
+    private fun extractDocxRuns(paragraphXml: String): String {
+        val runRegex = Regex("<w:r[\\s>][\\s\\S]*?</w:r>", RegexOption.DOT_MATCHES_ALL)
+        val sb = StringBuilder()
+
+        for (runMatch in runRegex.findAll(paragraphXml)) {
+            val run = runMatch.value
+
+            // Check formatting properties
+            val isBold = run.contains("<w:b/>") || run.contains("<w:b ") ||
+                run.contains("""w:val="true"""") && run.contains("<w:b")
+            val isItalic = run.contains("<w:i/>") || run.contains("<w:i ")
+            val isUnderline = run.contains("<w:u ") && !run.contains("""w:val="none"""")
+            val isStrike = run.contains("<w:strike/>") || run.contains("<w:strike ")
+
+            // Extract text
+            val text = TEXT_RUN.findAll(run)
+                .map { it.groupValues[1] }
+                .joinToString("")
+
+            if (text.isNotEmpty()) {
+                var formatted = text
+                if (isBold) formatted = "**$formatted**"
+                if (isItalic) formatted = "*$formatted*"
+                if (isStrike) formatted = "~~$formatted~~"
+                if (isUnderline && !isBold) formatted = "__${formatted}__"
+                sb.append(formatted)
+            }
+        }
+
+        return sb.toString()
+    }
+
+    /**
+     * Parse a DOCX table into a Markdown-style table.
+     */
+    private fun parseDocxTable(tableXml: String): String {
+        val rowRegex = Regex("<w:tr[\\s>][\\s\\S]*?</w:tr>", RegexOption.DOT_MATCHES_ALL)
+        val cellRegex = Regex("<w:tc[\\s>][\\s\\S]*?</w:tc>", RegexOption.DOT_MATCHES_ALL)
+        val rows = mutableListOf<List<String>>()
+
+        for (rowMatch in rowRegex.findAll(tableXml)) {
+            val cells = mutableListOf<String>()
+            for (cellMatch in cellRegex.findAll(rowMatch.value)) {
+                val cellText = TEXT_RUN.findAll(cellMatch.value)
+                    .map { it.groupValues[1] }
+                    .joinToString(" ")
+                    .trim()
+                cells.add(cellText.ifBlank { " " })
+            }
+            if (cells.isNotEmpty()) rows.add(cells)
+        }
+
+        if (rows.isEmpty()) return ""
+
+        // Normalize column count
+        val maxCols = rows.maxOf { it.size }
+        val normalized = rows.map { row ->
+            row + List(maxCols - row.size) { " " }
+        }
+
+        // Build markdown table
+        val sb = StringBuilder()
+        sb.appendLine()
+
+        // Header row
+        sb.appendLine("| " + normalized[0].joinToString(" | ") + " |")
+        sb.appendLine("| " + normalized[0].joinToString(" | ") { "---" } + " |")
+
+        // Data rows
+        for (i in 1 until normalized.size) {
+            sb.appendLine("| " + normalized[i].joinToString(" | ") + " |")
+        }
+        sb.appendLine()
+
+        return sb.toString()
     }
 
     // ─── XLSX (OOXML Spreadsheet) ────────────────────────────
@@ -211,7 +319,8 @@ class DocumentParser @Inject constructor() {
                 sb.appendLine("# Sheet $sheetIndex")
                 sb.appendLine()
 
-                // Parse rows
+                // Parse rows into a proper table
+                val allRows = mutableListOf<List<String>>()
                 val rowRegex = Regex("<row[\\s>][\\s\\S]*?</row>", RegexOption.DOT_MATCHES_ALL)
                 for (rowMatch in rowRegex.findAll(sheetXml)) {
                     val cells = mutableListOf<String>()
@@ -229,12 +338,28 @@ class DocumentParser @Inject constructor() {
                         } else {
                             value
                         }
-                        cells.add(cellText)
+                        cells.add(cellText.ifBlank { " " })
                     }
 
                     if (cells.any { it.isNotBlank() }) {
-                        sb.appendLine(cells.joinToString(" | "))
+                        allRows.add(cells)
                     }
+                }
+
+                // Render as Markdown table
+                if (allRows.isNotEmpty()) {
+                    val maxCols = allRows.maxOf { it.size }
+                    val normalized = allRows.map { row ->
+                        row + List(maxCols - row.size) { " " }
+                    }
+                    // Header
+                    sb.appendLine("| " + normalized[0].joinToString(" | ") + " |")
+                    sb.appendLine("| " + normalized[0].joinToString(" | ") { "---" } + " |")
+                    // Data
+                    for (i in 1 until normalized.size) {
+                        sb.appendLine("| " + normalized[i].joinToString(" | ") + " |")
+                    }
+                    sb.appendLine()
                 }
 
                 sheetIndex++

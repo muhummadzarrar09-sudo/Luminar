@@ -34,6 +34,9 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -80,6 +83,7 @@ import com.github.barteksc.pdfviewer.PDFView
 import com.luminar.reader.R
 import com.luminar.reader.data.model.AppTheme
 import com.luminar.reader.data.model.BookFormat
+import com.luminar.reader.data.model.Bookmark
 import com.luminar.reader.presentation.components.ErrorReportDialog
 import com.luminar.reader.presentation.theme.LuminarGold
 import com.luminar.reader.presentation.theme.next
@@ -306,6 +310,9 @@ fun ReaderScreen(
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                         viewModel.onEvent(ReaderEvent.ToggleBookmark)
                     },
+                    onGoToBookmark = { bookmark ->
+                        viewModel.onEvent(ReaderEvent.GoToBookmark(bookmark))
+                    },
                     onInteraction = viewModel::onControlsInteraction
                 )
 
@@ -340,6 +347,14 @@ fun ReaderScreen(
                         onClose = { viewModel.onEvent(ReaderEvent.CloseSearch) }
                     )
                 }
+
+                // ── Bottom reading progress bar (always visible, Kindle-style) ──
+                ReadingProgressBar(
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                    currentPage = uiState.currentPage,
+                    totalPages = uiState.totalPages,
+                    theme = uiState.currentTheme
+                )
             }
         }
     }
@@ -430,6 +445,7 @@ private fun ReaderControlsOverlay(
     onOpenSearch: () -> Unit,
     onToggleTts: () -> Unit,
     onToggleBookmark: () -> Unit,
+    onGoToBookmark: (Bookmark) -> Unit,
     onInteraction: () -> Unit
 ) {
     AnimatedVisibility(
@@ -468,6 +484,7 @@ private fun ReaderControlsOverlay(
                 onOpenSearch = onOpenSearch,
                 onToggleTts = onToggleTts,
                 onToggleBookmark = onToggleBookmark,
+                onGoToBookmark = onGoToBookmark,
                 onInteraction = onInteraction
             )
 
@@ -492,6 +509,7 @@ private fun ReaderTopControls(
     onOpenSearch: () -> Unit,
     onToggleTts: () -> Unit,
     onToggleBookmark: () -> Unit,
+    onGoToBookmark: (Bookmark) -> Unit,
     onInteraction: () -> Unit
 ) {
     val containerColor = uiState.currentTheme.readerControlsContainerColor()
@@ -565,17 +583,73 @@ private fun ReaderTopControls(
                 }
             }
 
-            // Bookmark toggle (all formats)
-            IconButton(
-                onClick = {
-                    onInteraction()
-                    onToggleBookmark()
+            // Bookmark toggle (tap to toggle, shows count)
+            Box {
+                var showBookmarkList by remember { mutableStateOf(false) }
+
+                IconButton(
+                    onClick = {
+                        if (uiState.bookmarks.isEmpty()) {
+                            onInteraction()
+                            onToggleBookmark()
+                        } else {
+                            showBookmarkList = !showBookmarkList
+                        }
+                    }
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = if (uiState.isCurrentPageBookmarked) "🔖" else "🏷️",
+                            fontSize = 18.sp
+                        )
+                        if (uiState.bookmarks.isNotEmpty()) {
+                            Text(
+                                text = "${uiState.bookmarks.size}",
+                                color = LuminarGold,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(start = 2.dp)
+                            )
+                        }
+                    }
                 }
-            ) {
-                Text(
-                    text = if (uiState.isCurrentPageBookmarked) "🔖" else "🏷️",
-                    fontSize = 18.sp
-                )
+
+                // Bookmark list dropdown
+                DropdownMenu(
+                    expanded = showBookmarkList,
+                    onDismissRequest = { showBookmarkList = false }
+                ) {
+                    // Add/remove current page
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = if (uiState.isCurrentPageBookmarked) "Remove bookmark" else "Add bookmark here",
+                                color = LuminarGold
+                            )
+                        },
+                        onClick = {
+                            onToggleBookmark()
+                            onInteraction()
+                        }
+                    )
+                    if (uiState.bookmarks.isNotEmpty()) {
+                        HorizontalDivider()
+                        uiState.bookmarks.forEach { bookmark ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = "${bookmark.label}",
+                                        fontSize = 14.sp
+                                    )
+                                },
+                                onClick = {
+                                    showBookmarkList = false
+                                    onGoToBookmark(bookmark)
+                                }
+                            )
+                        }
+                    }
+                }
             }
 
             TextButton(
@@ -683,9 +757,17 @@ private fun ReaderBottomControls(
                     }
                 }
 
-                // Word / char count
+                // Word / char count + session time
+                val sessionMinutes = remember { (System.currentTimeMillis()) }
+                val elapsedMinutes = ((System.currentTimeMillis() - sessionMinutes) / 60_000).toInt()
+
                 Text(
-                    text = "${formatCount(uiState.wordCount)} words  ·  ${formatCount(uiState.charCount)} chars",
+                    text = buildString {
+                        append("${formatCount(uiState.wordCount)} words  ·  ${formatCount(uiState.charCount)} chars")
+                        if (elapsedMinutes > 0) {
+                            append("  ·  ${elapsedMinutes}m reading")
+                        }
+                    },
                     modifier = Modifier.padding(bottom = 2.dp),
                     color = contentColor.copy(alpha = 0.5f),
                     fontSize = 12.sp
@@ -917,6 +999,52 @@ private fun SearchBar(
                     tint = contentColor
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun ReadingProgressBar(
+    modifier: Modifier = Modifier,
+    currentPage: Int,
+    totalPages: Int,
+    theme: AppTheme
+) {
+    if (totalPages <= 0) return
+
+    val progress = ((currentPage + 1).toFloat() / totalPages.toFloat()).coerceIn(0f, 1f)
+    val percentage = (progress * 100).toInt()
+    val contentColor = theme.readerControlsContentColor()
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(bottom = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // Percentage text (subtle, only shows when not 0%)
+        if (percentage > 0) {
+            Text(
+                text = "$percentage%",
+                color = contentColor.copy(alpha = 0.3f),
+                fontSize = 10.sp,
+                modifier = Modifier.padding(bottom = 2.dp)
+            )
+        }
+
+        // Thin progress line
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(2.dp)
+                .background(contentColor.copy(alpha = 0.08f))
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(progress)
+                    .height(2.dp)
+                    .background(LuminarGold.copy(alpha = 0.6f))
+            )
         }
     }
 }
