@@ -2,7 +2,7 @@
 package com.luminar.reader.navigation
 
 import androidx.compose.animation.AnimatedContentTransitionScope
-import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -17,7 +17,9 @@ import com.luminar.reader.presentation.library.LibraryScreen
 import com.luminar.reader.presentation.reader.ReaderScreen
 import com.luminar.reader.presentation.settings.SettingsScreen
 
-private const val NAV_ANIMATION_DURATION_MILLIS = 300
+private const val NAV_DURATION = 350
+private val EaseOutCubic = CubicBezierEasing(0.33f, 1f, 0.68f, 1f)
+private val EaseInCubic = CubicBezierEasing(0.32f, 0f, 0.67f, 0f)
 
 @Composable
 fun LuminarNavGraph(
@@ -33,36 +35,18 @@ fun LuminarNavGraph(
                 when (targetState.destination.route) {
                     Screen.Reader.route -> slideOutOfContainer(
                         towards = AnimatedContentTransitionScope.SlideDirection.Left,
-                        animationSpec = tween(
-                            durationMillis = NAV_ANIMATION_DURATION_MILLIS,
-                            easing = FastOutSlowInEasing
-                        )
+                        animationSpec = tween(NAV_DURATION, easing = EaseInCubic)
                     )
-
-                    else -> fadeOut(
-                        animationSpec = tween(
-                            durationMillis = NAV_ANIMATION_DURATION_MILLIS,
-                            easing = FastOutSlowInEasing
-                        )
-                    )
+                    else -> fadeOut(animationSpec = tween(NAV_DURATION))
                 }
             },
             popEnterTransition = {
                 when (initialState.destination.route) {
                     Screen.Reader.route -> slideIntoContainer(
                         towards = AnimatedContentTransitionScope.SlideDirection.Right,
-                        animationSpec = tween(
-                            durationMillis = NAV_ANIMATION_DURATION_MILLIS,
-                            easing = FastOutSlowInEasing
-                        )
+                        animationSpec = tween(NAV_DURATION, easing = EaseOutCubic)
                     )
-
-                    else -> fadeIn(
-                        animationSpec = tween(
-                            durationMillis = NAV_ANIMATION_DURATION_MILLIS,
-                            easing = FastOutSlowInEasing
-                        )
-                    )
+                    else -> fadeIn(animationSpec = tween(NAV_DURATION))
                 }
             }
         ) {
@@ -83,44 +67,30 @@ fun LuminarNavGraph(
         composable(
             route = Screen.Reader.route,
             arguments = listOf(
-                navArgument(Screen.Reader.BOOK_ID_ARG) {
-                    type = NavType.LongType
-                }
+                navArgument(Screen.Reader.BOOK_ID_ARG) { type = NavType.LongType }
             ),
             enterTransition = {
                 slideIntoContainer(
                     towards = AnimatedContentTransitionScope.SlideDirection.Left,
-                    animationSpec = tween(
-                        durationMillis = NAV_ANIMATION_DURATION_MILLIS,
-                        easing = FastOutSlowInEasing
-                    )
+                    animationSpec = tween(NAV_DURATION, easing = EaseOutCubic)
                 )
             },
             exitTransition = {
                 slideOutOfContainer(
                     towards = AnimatedContentTransitionScope.SlideDirection.Left,
-                    animationSpec = tween(
-                        durationMillis = NAV_ANIMATION_DURATION_MILLIS,
-                        easing = FastOutSlowInEasing
-                    )
+                    animationSpec = tween(NAV_DURATION, easing = EaseInCubic)
                 )
             },
             popEnterTransition = {
                 slideIntoContainer(
                     towards = AnimatedContentTransitionScope.SlideDirection.Right,
-                    animationSpec = tween(
-                        durationMillis = NAV_ANIMATION_DURATION_MILLIS,
-                        easing = FastOutSlowInEasing
-                    )
+                    animationSpec = tween(NAV_DURATION, easing = EaseOutCubic)
                 )
             },
             popExitTransition = {
                 slideOutOfContainer(
                     towards = AnimatedContentTransitionScope.SlideDirection.Right,
-                    animationSpec = tween(
-                        durationMillis = NAV_ANIMATION_DURATION_MILLIS,
-                        easing = FastOutSlowInEasing
-                    )
+                    animationSpec = tween(NAV_DURATION, easing = EaseInCubic)
                 )
             }
         ) {
@@ -134,37 +104,25 @@ fun LuminarNavGraph(
             enterTransition = {
                 slideIntoContainer(
                     towards = AnimatedContentTransitionScope.SlideDirection.Up,
-                    animationSpec = tween(
-                        durationMillis = NAV_ANIMATION_DURATION_MILLIS,
-                        easing = FastOutSlowInEasing
-                    )
+                    animationSpec = tween(NAV_DURATION, easing = EaseOutCubic)
                 )
             },
             exitTransition = {
                 slideOutOfContainer(
                     towards = AnimatedContentTransitionScope.SlideDirection.Down,
-                    animationSpec = tween(
-                        durationMillis = NAV_ANIMATION_DURATION_MILLIS,
-                        easing = FastOutSlowInEasing
-                    )
+                    animationSpec = tween(NAV_DURATION, easing = EaseInCubic)
                 )
             },
             popEnterTransition = {
                 slideIntoContainer(
                     towards = AnimatedContentTransitionScope.SlideDirection.Up,
-                    animationSpec = tween(
-                        durationMillis = NAV_ANIMATION_DURATION_MILLIS,
-                        easing = FastOutSlowInEasing
-                    )
+                    animationSpec = tween(NAV_DURATION, easing = EaseOutCubic)
                 )
             },
             popExitTransition = {
                 slideOutOfContainer(
                     towards = AnimatedContentTransitionScope.SlideDirection.Down,
-                    animationSpec = tween(
-                        durationMillis = NAV_ANIMATION_DURATION_MILLIS,
-                        easing = FastOutSlowInEasing
-                    )
+                    animationSpec = tween(NAV_DURATION, easing = EaseInCubic)
                 )
             }
         ) {

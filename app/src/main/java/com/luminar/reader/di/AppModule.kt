@@ -28,7 +28,11 @@ object DatabaseModule {
             context,
             AppDatabase::class.java,
             "luminar_reader.db"
-        ).build()
+        )
+            // Safe migration: if schema changes, rebuild DB rather than crash.
+            // For production, add Migration objects for each version bump.
+            .fallbackToDestructiveMigration()
+            .build()
     }
 
     @Provides

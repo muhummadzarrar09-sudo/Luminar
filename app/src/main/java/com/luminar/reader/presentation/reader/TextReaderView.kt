@@ -376,6 +376,13 @@ private fun highlightAnnotatedString(
     }
 }
 
+// ─── Cached regex patterns ───────────────────────────────
+
+private val HR_REGEX = Regex("^[-*_]{3,}$")
+private val UL_REGEX = Regex("^[-*+]\\s+.*")
+private val OL_REGEX = Regex("^\\d+[.)]+\\s+.*")
+private val OL_CAPTURE = Regex("^(\\d+[.)]+)\\s+(.*)")
+
 // ─── Markdown parser ─────────────────────────────────────────
 
 private fun parseMarkdownBlocks(source: String): List<TextBlock> {
@@ -399,7 +406,7 @@ private fun parseMarkdownBlocks(source: String): List<TextBlock> {
                 blocks.add(TextBlock.CodeBlock(codeLines.joinToString("\n"), lang))
                 i++
             }
-            trimmed.matches(Regex("^[-*_]{3,}$")) -> {
+            trimmed.matches(HR_REGEX) -> {
                 blocks.add(TextBlock.Divider)
                 i++
             }
@@ -417,14 +424,14 @@ private fun parseMarkdownBlocks(source: String): List<TextBlock> {
                 }
                 blocks.add(TextBlock.Quote(parseInlineMarkdown(quoteLines.joinToString(" "))))
             }
-            trimmed.matches(Regex("^[-*+]\\s+.*")) -> {
+            trimmed.matches(UL_REGEX) -> {
                 val indent = line.indexOf(trimmed[0]) / 2
                 val text = trimmed.drop(2).trimStart()
                 blocks.add(TextBlock.BulletItem(parseInlineMarkdown(text), indent))
                 i++
             }
-            trimmed.matches(Regex("^\\d+[.)]+\\s+.*")) -> {
-                val match = Regex("^(\\d+[.)]+)\\s+(.*)").find(trimmed)
+            trimmed.matches(OL_REGEX) -> {
+                val match = OL_CAPTURE.find(trimmed)
                 if (match != null) {
                     blocks.add(TextBlock.NumberedItem(match.groupValues[1], parseInlineMarkdown(match.groupValues[2])))
                 }
@@ -436,8 +443,8 @@ private fun parseMarkdownBlocks(source: String): List<TextBlock> {
                 while (i < lines.size) {
                     val pLine = lines[i].trim()
                     if (pLine.isEmpty() || pLine.startsWith("#") || pLine.startsWith("```") ||
-                        pLine.startsWith(">") || pLine.matches(Regex("^[-*+]\\s+.*")) ||
-                        pLine.matches(Regex("^\\d+[.)]+\\s+.*")) || pLine.matches(Regex("^[-*_]{3,}$"))
+                        pLine.startsWith(">") || pLine.matches(UL_REGEX) ||
+                        pLine.matches(OL_REGEX) || pLine.matches(HR_REGEX)
                     ) break
                     paraLines.add(pLine)
                     i++

@@ -6,7 +6,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.luminar.reader.data.local.datastore.UserPreferencesRepository
 import com.luminar.reader.data.epub.EpubChapter
+import com.luminar.reader.data.error.ErrorReporter
+import com.luminar.reader.data.local.db.BookDao
 import com.luminar.reader.data.model.AppTheme
+import com.luminar.reader.data.model.Bookmark
 import com.luminar.reader.data.model.Book
 import com.luminar.reader.data.model.BookFormat
 import com.luminar.reader.data.model.FontScale
@@ -41,6 +44,7 @@ data class ReaderUiState(
     val error: String? = null,
     val textContent: String? = null,
     val epubChapters: List<EpubChapter>? = null,
+    val comicImagePaths: List<String>? = null,
     val scrollMode: ScrollMode = ScrollMode.VERTICAL_SCROLL,
     val scrollPosition: Int = 0,
     val fontScale: FontScale = FontScale.NORMAL,
@@ -51,13 +55,27 @@ data class ReaderUiState(
     val searchQuery: String = "",
     val searchMatchBlockIndices: List<Int> = emptyList(),
     val currentMatchIndex: Int = -1,
-    val scrollToBlockIndex: Int? = null
+    val scrollToBlockIndex: Int? = null,
+    val lastErrorThrowable: Throwable? = null,
+    val showErrorReport: Boolean = false,
+    val bookmarks: List<Bookmark> = emptyList(),
+    val isCurrentPageBookmarked: Boolean = false
 ) {
     val isTextBased: Boolean
         get() = book?.format?.isTextBased == true
 
     val isEpub: Boolean
         get() = book?.format == BookFormat.EPUB
+
+    val isDocument: Boolean
+        get() = book?.format?.isDocumentFormat == true
+
+    val isComicBook: Boolean
+        get() = book?.format?.isComicBook == true
+
+    /** True if content is rendered through TextReaderView (not PDF or comic) */
+    val usesTextRenderer: Boolean
+        get() = isTextBased || isEpub || isDocument
 
     val matchCount: Int
         get() = searchMatchBlockIndices.size
@@ -87,6 +105,18 @@ sealed interface ReaderEvent {
     data class UpdateSearchQuery(val query: String) : ReaderEvent
     data object NextMatch : ReaderEvent
     data object PreviousMatch : ReaderEvent
+    data object ShowErrorReport : ReaderEvent
+    data object DismissErrorReport : ReaderEvent
+    data class SendErrorReport(val userNote: String) : ReaderEvent
+    // TTS
+    data object ToggleTts : ReaderEvent
+    data object TtsSkipForward : ReaderEvent
+    data object TtsSkipBackward : ReaderEvent
+    data class TtsSetSpeed(val speed: Float) : ReaderEvent
+    // Bookmarks
+    data object ToggleBookmark : ReaderEvent
+    data class GoToBookmark(val bookmark: Bookmark) : ReaderEvent
+    data class DeleteBookmark(val bookmark: Bookmark) : ReaderEvent
 }
 
 @OptIn(FlowPreview::class)
@@ -94,9 +124,12 @@ sealed interface ReaderEvent {
 class ReaderViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val bookRepository: BookRepository,
+    private val bookDao: BookDao,
     private val saveProgressUseCase: SaveProgressUseCase,
     private val userPreferencesRepository: UserPreferencesRepository,
-    private val readerInputController: ReaderInputController
+    private val readerInputController: ReaderInputController,
+    private val errorReporter: ErrorReporter,
+    val ttsController: TtsController
 ) : ViewModel() {
 
     private val bookId: Long = checkNotNull(savedStateHandle[Screen.Reader.BOOK_ID_ARG])
@@ -110,6 +143,7 @@ class ReaderViewModel @Inject constructor(
 
     private var controlsAutoHideJob: Job? = null
     private var lastPersistedPage: Int = 0
+    private val sessionStartTime = System.currentTimeMillis()
 
     // Cache parsed blocks for search
     private var parsedBlockTexts: List<String> = emptyList()
@@ -120,6 +154,7 @@ class ReaderViewModel @Inject constructor(
         observePreferences()
         observePageChanges()
         observeReaderCommands()
+        observeBookmarks()
         markBookOpened()
     }
 
@@ -133,6 +168,18 @@ class ReaderViewModel @Inject constructor(
             ReaderEvent.ToggleScrollMode -> toggleScrollMode()
             ReaderEvent.IncreaseFontSize -> changeFontScale(increase = true)
             ReaderEvent.DecreaseFontSize -> changeFontScale(increase = false)
+            ReaderEvent.ShowErrorReport -> _uiState.update { it.copy(showErrorReport = true) }
+            ReaderEvent.DismissErrorReport -> _uiState.update {
+                it.copy(showErrorReport = false, error = null, lastErrorThrowable = null)
+            }
+            is ReaderEvent.SendErrorReport -> sendErrorReport(event.userNote)
+            ReaderEvent.ToggleTts -> toggleTts()
+            ReaderEvent.TtsSkipForward -> ttsController.skipForward()
+            ReaderEvent.TtsSkipBackward -> ttsController.skipBackward()
+            is ReaderEvent.TtsSetSpeed -> ttsController.setSpeed(event.speed)
+            ReaderEvent.ToggleBookmark -> toggleBookmark()
+            is ReaderEvent.GoToBookmark -> goToPage(event.bookmark.page)
+            is ReaderEvent.DeleteBookmark -> deleteBookmark(event.bookmark)
             ReaderEvent.OpenSearch -> openSearch()
             ReaderEvent.CloseSearch -> closeSearch()
             is ReaderEvent.UpdateSearchQuery -> updateSearchQuery(event.query)
@@ -166,7 +213,7 @@ class ReaderViewModel @Inject constructor(
     fun saveCurrentProgressImmediately() {
         viewModelScope.launch {
             val state = _uiState.value
-            if (state.isTextBased || state.isEpub) {
+            if (state.usesTextRenderer || state.isComicBook) {
                 saveProgressUseCase(
                     bookId = bookId,
                     currentPage = state.scrollPosition,
@@ -191,6 +238,91 @@ class ReaderViewModel @Inject constructor(
         val query = _uiState.value.searchQuery
         if (query.isNotEmpty()) {
             performSearch(query)
+        }
+    }
+
+    private fun toggleTts() {
+        val state = _uiState.value
+        val ttsState = ttsController.state.value
+        if (ttsState.isSpeaking) {
+            ttsController.pause()
+        } else {
+            val text = state.textContent
+            if (text != null) {
+                ttsController.startSpeaking(text)
+            }
+        }
+        cancelControlsAutoHide()
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        ttsController.stop()
+        // Record reading session duration
+        val durationMinutes = (System.currentTimeMillis() - sessionStartTime) / 60_000
+        if (durationMinutes > 0) {
+            viewModelScope.launch {
+                userPreferencesRepository.recordReadingSession(durationMinutes)
+            }
+        }
+    }
+
+    // ─── Bookmarks ────────────────────────────────────────────
+
+    private fun observeBookmarks() {
+        viewModelScope.launch {
+            bookDao.getBookmarks(bookId).collect { bookmarks ->
+                _uiState.update { state ->
+                    val currentPage = state.currentPage
+                    state.copy(
+                        bookmarks = bookmarks,
+                        isCurrentPageBookmarked = bookmarks.any { it.page == currentPage }
+                    )
+                }
+            }
+        }
+    }
+
+    private fun toggleBookmark() {
+        val state = _uiState.value
+        val currentPage = if (state.usesTextRenderer) state.scrollPosition else state.currentPage
+        val existing = state.bookmarks.find { it.page == currentPage }
+
+        viewModelScope.launch {
+            if (existing != null) {
+                bookDao.deleteBookmark(existing)
+            } else {
+                bookDao.insertBookmark(
+                    Bookmark(
+                        bookId = bookId,
+                        page = currentPage,
+                        label = "Page ${currentPage + 1}"
+                    )
+                )
+            }
+        }
+    }
+
+    private fun deleteBookmark(bookmark: Bookmark) {
+        viewModelScope.launch {
+            bookDao.deleteBookmark(bookmark)
+        }
+    }
+
+    private fun sendErrorReport(userNote: String) {
+        val state = _uiState.value
+        viewModelScope.launch {
+            errorReporter.report(
+                errorType = "reader_error",
+                errorMessage = state.error ?: "Unknown",
+                throwable = state.lastErrorThrowable,
+                context = "Reader — ${state.book?.format?.displayName ?: "unknown"} file",
+                fileFormat = state.book?.format?.name,
+                userNote = userNote
+            )
+            _uiState.update {
+                it.copy(showErrorReport = false, error = null, lastErrorThrowable = null)
+            }
         }
     }
 
@@ -298,10 +430,13 @@ class ReaderViewModel @Inject constructor(
                         )
                     }
 
-                    if (book != null && book.format == BookFormat.EPUB && _uiState.value.epubChapters == null) {
-                        loadEpubChapters(book)
-                    } else if (book != null && book.format.isTextBased && _uiState.value.textContent == null) {
-                        loadTextContent(book)
+                    if (book != null) {
+                        when {
+                            book.format.isComicBook && _uiState.value.comicImagePaths == null -> loadComicPages(book)
+                            book.format == BookFormat.EPUB && _uiState.value.textContent == null -> loadEpubChapters(book)
+                            book.format.isDocumentFormat && _uiState.value.textContent == null -> loadDocumentContent(book)
+                            book.format.isTextBased && _uiState.value.textContent == null -> loadTextContent(book)
+                        }
                     }
                 }
         }
@@ -326,7 +461,51 @@ class ReaderViewModel @Inject constructor(
                 }
             } catch (throwable: Throwable) {
                 _uiState.update {
-                    it.copy(error = "Unable to read EPUB: ${throwable.message}")
+                    it.copy(error = "Unable to read EPUB: ${throwable.message}", lastErrorThrowable = throwable, showErrorReport = true)
+                }
+            }
+        }
+    }
+
+    private fun loadComicPages(book: Book) {
+        viewModelScope.launch {
+            try {
+                val paths = bookRepository.getComicImagePaths(book)
+                _uiState.update {
+                    it.copy(
+                        comicImagePaths = paths,
+                        totalPages = paths.size.coerceAtLeast(1)
+                    )
+                }
+            } catch (throwable: Throwable) {
+                _uiState.update {
+                    it.copy(error = "Unable to read comic: ${throwable.message}", lastErrorThrowable = throwable, showErrorReport = true)
+                }
+            }
+        }
+    }
+
+    fun getComicImageBytes(entryPath: String): ByteArray {
+        val book = _uiState.value.book ?: throw IllegalStateException("No book loaded")
+        return bookRepository.getComicImageBytes(book, entryPath)
+    }
+
+    private fun loadDocumentContent(book: Book) {
+        viewModelScope.launch {
+            try {
+                val content = bookRepository.readDocumentContent(book)
+                val words = content.split(Regex("\\s+")).count { it.isNotBlank() }
+                val chars = content.length
+                _uiState.update {
+                    it.copy(
+                        textContent = content,
+                        wordCount = words,
+                        charCount = chars
+                    )
+                }
+            } catch (throwable: Throwable) {
+                _uiState.update {
+                    it.copy(error = "Unable to read document: ${throwable.message}", lastErrorThrowable = throwable, showErrorReport = true)
                 }
             }
         }
@@ -347,7 +526,7 @@ class ReaderViewModel @Inject constructor(
                 }
             } catch (throwable: Throwable) {
                 _uiState.update {
-                    it.copy(error = "Unable to read file: ${throwable.message}")
+                    it.copy(error = "Unable to read file: ${throwable.message}", lastErrorThrowable = throwable, showErrorReport = true)
                 }
             }
         }
@@ -408,6 +587,7 @@ class ReaderViewModel @Inject constructor(
     private fun markBookOpened() {
         viewModelScope.launch {
             bookRepository.markBookOpened(bookId)
+            userPreferencesRepository.incrementBooksOpened()
         }
     }
 
@@ -416,7 +596,12 @@ class ReaderViewModel @Inject constructor(
     private fun onPageChanged(page: Int) {
         val target = page.coerceIn(0, maxPage())
         if (target == _uiState.value.currentPage) return
-        _uiState.update { it.copy(currentPage = target) }
+        _uiState.update {
+            it.copy(
+                currentPage = target,
+                isCurrentPageBookmarked = it.bookmarks.any { bm -> bm.page == target }
+            )
+        }
         pageChanges.tryEmit(target)
     }
 
@@ -499,7 +684,7 @@ class ReaderViewModel @Inject constructor(
 
     private suspend fun persistPage(page: Int, force: Boolean) {
         val book = _uiState.value.book ?: return
-        val target = if (book.format.isTextBased || book.format == BookFormat.EPUB) page else page.coerceIn(0, maxPage())
+        val target = if (book.format.isTextBased || book.format == BookFormat.EPUB || book.format.isDocumentFormat || book.format.isComicBook) page else page.coerceIn(0, maxPage())
 
         if (!force && abs(target - lastPersistedPage) < 3) return
 

@@ -24,7 +24,11 @@ data class SettingsUiState(
     val ollamaBaseUrl: String = "http://192.168.1.1:11434",
     val ollamaModel: String = "deepseek-r1:7b",
     val appVersion: String = BuildConfig.VERSION_NAME,
-    val isLoading: Boolean = true
+    val isLoading: Boolean = true,
+    // Reading stats
+    val totalReadingTimeMinutes: Long = 0,
+    val totalBooksOpened: Int = 0,
+    val currentStreak: Int = 0
 )
 
 sealed interface SettingsEvent {
@@ -56,7 +60,10 @@ class SettingsViewModel @Inject constructor(
                         ollamaBaseUrl = preferences.ollamaBaseUrl,
                         ollamaModel = preferences.ollamaModel,
                         appVersion = BuildConfig.VERSION_NAME,
-                        isLoading = false
+                        isLoading = false,
+                        totalReadingTimeMinutes = preferences.totalReadingTimeMinutes,
+                        totalBooksOpened = preferences.totalBooksOpened,
+                        currentStreak = preferences.currentStreak
                     )
                 }
             }

@@ -60,6 +60,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -78,6 +80,7 @@ import com.github.barteksc.pdfviewer.PDFView
 import com.luminar.reader.R
 import com.luminar.reader.data.model.AppTheme
 import com.luminar.reader.data.model.BookFormat
+import com.luminar.reader.presentation.components.ErrorReportDialog
 import com.luminar.reader.presentation.theme.LuminarGold
 import com.luminar.reader.presentation.theme.next
 import com.luminar.reader.presentation.theme.readerBackgroundColor
@@ -99,6 +102,7 @@ fun ReaderScreen(
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
     val lifecycleOwner = LocalLifecycleOwner.current
+    val haptics = LocalHapticFeedback.current
 
     DisposableEffect(activity) {
         val window = activity?.window
@@ -153,6 +157,15 @@ fun ReaderScreen(
         }
     }
 
+    // Error report dialog
+    if (uiState.showErrorReport && uiState.error != null) {
+        ErrorReportDialog(
+            errorMessage = uiState.error,
+            onDismiss = { viewModel.onEvent(ReaderEvent.DismissErrorReport) },
+            onSendReport = { note -> viewModel.onEvent(ReaderEvent.SendErrorReport(note)) }
+        )
+    }
+
     val backgroundColor = uiState.currentTheme.readerBackgroundColor()
     val book = uiState.book
     val file = remember(book?.filePath) { book?.filePath?.let(::File) }
@@ -185,12 +198,41 @@ fun ReaderScreen(
             }
 
             else -> {
-                if (uiState.isEpub || uiState.isTextBased) {
+                if (uiState.isComicBook) {
+                    val comicPaths = uiState.comicImagePaths
+                    if (comicPaths != null) {
+                        ComicReaderView(
+                            comicFile = file,
+                            imagePaths = comicPaths,
+                            theme = uiState.currentTheme,
+                            initialPage = uiState.currentPage,
+                            onPageChanged = { page ->
+                                viewModel.onEvent(ReaderEvent.PageChanged(page))
+                            },
+                            onToggleControls = {
+                                viewModel.onEvent(ReaderEvent.ToggleControls)
+                            },
+                            getImageBytes = { f, path ->
+                                viewModel.getComicImageBytes(path)
+                            }
+                        )
+                    } else {
+                        ReaderLoadingState(
+                            modifier = Modifier.align(Alignment.Center),
+                            message = "Loading comic…"
+                        )
+                    }
+                } else if (uiState.usesTextRenderer) {
                     val textContent = uiState.textContent
                     if (textContent != null) {
+                        val renderFormat = when {
+                            uiState.isEpub -> BookFormat.MARKDOWN
+                            uiState.isDocument -> BookFormat.MARKDOWN
+                            else -> book.format
+                        }
                         TextReaderView(
                             content = textContent,
-                            format = if (uiState.isEpub) BookFormat.MARKDOWN else book.format,
+                            format = renderFormat,
                             theme = uiState.currentTheme,
                             fontScale = uiState.fontScale,
                             searchQuery = uiState.searchQuery,
@@ -210,9 +252,9 @@ fun ReaderScreen(
                             initialScrollPosition = uiState.scrollPosition
                         )
                     } else {
-                        CircularProgressIndicator(
+                        ReaderLoadingState(
                             modifier = Modifier.align(Alignment.Center),
-                            color = LuminarGold
+                            message = "Parsing document…"
                         )
                     }
                 } else {
@@ -236,6 +278,7 @@ fun ReaderScreen(
                         currentOnNavigateBack()
                     },
                     onToggleTheme = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         viewModel.onEvent(
                             ReaderEvent.ThemeChanged(uiState.currentTheme.next())
                         )
@@ -244,24 +287,55 @@ fun ReaderScreen(
                         viewModel.onEvent(ReaderEvent.GoToPage(page))
                     },
                     onIncreaseFontSize = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         viewModel.onEvent(ReaderEvent.IncreaseFontSize)
                     },
                     onDecreaseFontSize = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         viewModel.onEvent(ReaderEvent.DecreaseFontSize)
                     },
                     onOpenSearch = {
                         viewModel.onEvent(ReaderEvent.OpenSearch)
                     },
+                    onToggleTts = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        viewModel.onEvent(ReaderEvent.ToggleTts)
+                    },
+                    onToggleBookmark = {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        viewModel.onEvent(ReaderEvent.ToggleBookmark)
+                    },
                     onInteraction = viewModel::onControlsInteraction
                 )
+
+                // TTS controls (independent of controls visibility)
+                val ttsState by viewModel.ttsController.state.collectAsStateWithLifecycle()
+                if (ttsState.isSpeaking || ttsState.totalChunks > 0) {
+                    Box(modifier = Modifier.align(Alignment.BottomCenter)) {
+                    TtsControlBar(
+                        ttsState = ttsState,
+                        theme = uiState.currentTheme,
+                        onToggle = { viewModel.onEvent(ReaderEvent.ToggleTts) },
+                        onSkipBack = { viewModel.onEvent(ReaderEvent.TtsSkipBackward) },
+                        onSkipForward = { viewModel.onEvent(ReaderEvent.TtsSkipForward) },
+                        onStop = { viewModel.ttsController.stop() }
+                    )
+                    }
+                }
 
                 // Search bar overlay (independent of controls visibility)
                 if (uiState.isSearchActive) {
                     SearchBar(
                         uiState = uiState,
                         onQueryChanged = { viewModel.onEvent(ReaderEvent.UpdateSearchQuery(it)) },
-                        onNextMatch = { viewModel.onEvent(ReaderEvent.NextMatch) },
-                        onPreviousMatch = { viewModel.onEvent(ReaderEvent.PreviousMatch) },
+                        onNextMatch = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            viewModel.onEvent(ReaderEvent.NextMatch)
+                        },
+                        onPreviousMatch = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            viewModel.onEvent(ReaderEvent.PreviousMatch)
+                        },
                         onClose = { viewModel.onEvent(ReaderEvent.CloseSearch) }
                     )
                 }
@@ -353,6 +427,8 @@ private fun ReaderControlsOverlay(
     onIncreaseFontSize: () -> Unit,
     onDecreaseFontSize: () -> Unit,
     onOpenSearch: () -> Unit,
+    onToggleTts: () -> Unit,
+    onToggleBookmark: () -> Unit,
     onInteraction: () -> Unit
 ) {
     AnimatedVisibility(
@@ -389,6 +465,8 @@ private fun ReaderControlsOverlay(
                 onNavigateBack = onNavigateBack,
                 onToggleTheme = onToggleTheme,
                 onOpenSearch = onOpenSearch,
+                onToggleTts = onToggleTts,
+                onToggleBookmark = onToggleBookmark,
                 onInteraction = onInteraction
             )
 
@@ -411,6 +489,8 @@ private fun ReaderTopControls(
     onNavigateBack: () -> Unit,
     onToggleTheme: () -> Unit,
     onOpenSearch: () -> Unit,
+    onToggleTts: () -> Unit,
+    onToggleBookmark: () -> Unit,
     onInteraction: () -> Unit
 ) {
     val containerColor = uiState.currentTheme.readerControlsContainerColor()
@@ -449,7 +529,7 @@ private fun ReaderTopControls(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                if (uiState.isTextBased || uiState.isEpub) {
+                if (uiState.usesTextRenderer || uiState.isComicBook) {
                     Text(
                         text = uiState.book?.format?.displayName.orEmpty(),
                         color = contentColor.copy(alpha = 0.55f),
@@ -459,7 +539,7 @@ private fun ReaderTopControls(
                 }
             }
 
-            if (uiState.isTextBased || uiState.isEpub) {
+            if (uiState.usesTextRenderer) {
                 IconButton(
                     onClick = {
                         onInteraction()
@@ -472,6 +552,29 @@ private fun ReaderTopControls(
                         tint = contentColor
                     )
                 }
+
+                // TTS button
+                IconButton(
+                    onClick = {
+                        onInteraction()
+                        onToggleTts()
+                    }
+                ) {
+                    Text(text = "🔊", fontSize = 18.sp)
+                }
+            }
+
+            // Bookmark toggle (all formats)
+            IconButton(
+                onClick = {
+                    onInteraction()
+                    onToggleBookmark()
+                }
+            ) {
+                Text(
+                    text = if (uiState.isCurrentPageBookmarked) "🔖" else "🏷️",
+                    fontSize = 18.sp
+                )
             }
 
             TextButton(
@@ -542,7 +645,7 @@ private fun ReaderBottomControls(
                 .padding(horizontal = 18.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            if (uiState.isTextBased || uiState.isEpub) {
+            if (uiState.usesTextRenderer) {
                 // Font size controls
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -814,6 +917,93 @@ private fun SearchBar(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun TtsControlBar(
+    ttsState: TtsState,
+    theme: AppTheme,
+    onToggle: () -> Unit,
+    onSkipBack: () -> Unit,
+    onSkipForward: () -> Unit,
+    onStop: () -> Unit
+) {
+    val containerColor = theme.readerControlsContainerColor()
+    val contentColor = theme.readerControlsContentColor()
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 8.dp)
+            .padding(bottom = 80.dp),
+        color = containerColor,
+        contentColor = contentColor,
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+        shadowElevation = 8.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            // Stop
+            IconButton(onClick = onStop) {
+                Text(text = "⏹", fontSize = 18.sp)
+            }
+
+            // Skip back
+            IconButton(onClick = onSkipBack) {
+                Text(text = "⏮", fontSize = 18.sp)
+            }
+
+            // Play/Pause
+            IconButton(onClick = onToggle) {
+                Text(
+                    text = if (ttsState.isSpeaking) "⏸" else "▶",
+                    fontSize = 22.sp
+                )
+            }
+
+            // Skip forward
+            IconButton(onClick = onSkipForward) {
+                Text(text = "⏭", fontSize = 18.sp)
+            }
+
+            // Progress
+            Text(
+                text = if (ttsState.totalChunks > 0)
+                    "${ttsState.currentChunkIndex + 1}/${ttsState.totalChunks}"
+                else "",
+                color = contentColor.copy(alpha = 0.6f),
+                fontSize = 12.sp
+            )
+        }
+    }
+}
+
+@Composable
+private fun ReaderLoadingState(
+    modifier: Modifier = Modifier,
+    message: String = "Loading…"
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(32.dp),
+            color = LuminarGold,
+            strokeWidth = 3.dp
+        )
+        Text(
+            text = message,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
+            fontSize = 13.sp
+        )
     }
 }
 

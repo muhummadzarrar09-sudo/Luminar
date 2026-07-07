@@ -5,9 +5,20 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import com.luminar.reader.data.model.BookFormat
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,9 +35,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -55,6 +72,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -62,6 +80,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -78,6 +101,7 @@ import coil.compose.AsyncImage
 import com.luminar.reader.R
 import com.luminar.reader.data.model.Book
 import com.luminar.reader.data.model.ReadingProgress
+import com.luminar.reader.presentation.components.ErrorReportDialog
 import com.luminar.reader.presentation.theme.LuminarGold
 import com.luminar.reader.presentation.theme.LuminarTitleFont
 import java.io.File
@@ -91,6 +115,19 @@ fun LibraryScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
+    val haptics = LocalHapticFeedback.current
+    val gridState = rememberLazyGridState()
+
+    // FAB visibility — hide when scrolling down
+    val isFabVisible by remember {
+        derivedStateOf {
+            val layoutInfo = gridState.layoutInfo
+            if (layoutInfo.visibleItemsInfo.isEmpty()) true
+            else gridState.firstVisibleItemScrollOffset <= 0 ||
+                !gridState.isScrollInProgress ||
+                gridState.firstVisibleItemIndex < 2
+        }
+    }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
@@ -122,6 +159,15 @@ fun LibraryScreen(
                 viewModel.onEvent(LibraryEvent.DeleteBook(book))
                 bookPendingDeletion = null
             }
+        )
+    }
+
+    // Error report dialog
+    if (uiState.showErrorReport && uiState.error != null) {
+        ErrorReportDialog(
+            errorMessage = uiState.error,
+            onDismiss = { viewModel.onEvent(LibraryEvent.DismissErrorReport) },
+            onSendReport = { note -> viewModel.onEvent(LibraryEvent.SendErrorReport(note)) }
         )
     }
 
@@ -194,15 +240,24 @@ fun LibraryScreen(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = { filePickerLauncher.launch(BookFormat.IMPORTABLE_MIME_TYPES) },
-                containerColor = LuminarGold,
-                contentColor = Color(0xFF171100)
+            AnimatedVisibility(
+                visible = isFabVisible,
+                enter = slideInVertically(initialOffsetY = { it * 2 }) + fadeIn(),
+                exit = slideOutVertically(targetOffsetY = { it * 2 }) + fadeOut()
             ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_add_24),
-                    contentDescription = "Import file"
-                )
+                FloatingActionButton(
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        filePickerLauncher.launch(BookFormat.IMPORTABLE_MIME_TYPES)
+                    },
+                    containerColor = LuminarGold,
+                    contentColor = Color(0xFF171100)
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_add_24),
+                        contentDescription = "Import file"
+                    )
+                }
             }
         }
     ) { innerPadding ->
@@ -224,10 +279,7 @@ fun LibraryScreen(
             Box(modifier = Modifier.fillMaxSize()) {
                 when {
                     uiState.isLoading -> {
-                        CircularProgressIndicator(
-                            modifier = Modifier.align(Alignment.Center),
-                            color = LuminarGold
-                        )
+                        LibraryLoadingSkeleton()
                     }
 
                     uiState.allBooks.isEmpty() -> {
@@ -260,12 +312,16 @@ fun LibraryScreen(
 
                     else -> {
                         if (uiState.viewMode == ViewMode.GRID) {
-                            LibraryGrid(
-                                uiState = uiState,
-                                onBookClick = { viewModel.onEvent(LibraryEvent.OpenBook(it)) },
-                                onBookLongClick = { bookPendingDeletion = it },
-                                onRemoveMissingBook = { viewModel.onEvent(LibraryEvent.DeleteBook(it)) }
-                            )
+                        LibraryGrid(
+                            uiState = uiState,
+                            gridState = gridState,
+                            onBookClick = { viewModel.onEvent(LibraryEvent.OpenBook(it)) },
+                            onBookLongClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                bookPendingDeletion = it
+                            },
+                            onRemoveMissingBook = { viewModel.onEvent(LibraryEvent.DeleteBook(it)) }
+                        )
                         } else {
                             LibraryList(
                                 uiState = uiState,
@@ -409,11 +465,13 @@ private fun LibraryToolbar(
 @Composable
 private fun LibraryGrid(
     uiState: LibraryUiState,
+    gridState: androidx.compose.foundation.lazy.grid.LazyGridState,
     onBookClick: (Book) -> Unit,
     onBookLongClick: (Book) -> Unit,
     onRemoveMissingBook: (Book) -> Unit
 ) {
     LazyVerticalGrid(
+        state = gridState,
         modifier = Modifier.fillMaxSize(),
         columns = GridCells.Fixed(2),
         contentPadding = PaddingValues(16.dp),
@@ -425,6 +483,10 @@ private fun LibraryGrid(
             key = { it.id }
         ) { book ->
             BookCard(
+                modifier = Modifier.animateItem(
+                    fadeInSpec = tween(300),
+                    fadeOutSpec = tween(300)
+                ),
                 book = book,
                 progress = uiState.progressByBookId[book.id].progressFraction(book.totalPages),
                 onClick = { onBookClick(book) },
@@ -548,6 +610,7 @@ private fun LibraryList(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun BookCard(
+    modifier: Modifier = Modifier,
     book: Book,
     progress: Float,
     onClick: () -> Unit,
@@ -560,13 +623,32 @@ private fun BookCard(
     }
     val fileSize = remember(book.filePath) { formatFileSize(File(book.filePath)) }
 
+    // Press scale animation
+    var isPressed by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.96f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessHigh
+        ),
+        label = "cardScale"
+    )
+
     Card(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = onLongClick
-            ),
+            .scale(scale)
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onPress = {
+                        isPressed = true
+                        tryAwaitRelease()
+                        isPressed = false
+                    },
+                    onTap = { onClick() },
+                    onLongPress = { onLongClick() }
+                )
+            },
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
@@ -719,11 +801,94 @@ private fun ProgressStrip(progress: Float) {
 }
 
 @Composable
+private fun LibraryLoadingSkeleton() {
+    val transition = rememberInfiniteTransition(label = "shimmer")
+    val alpha by transition.animateFloat(
+        initialValue = 0.15f,
+        targetValue = 0.35f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(800, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "shimmerAlpha"
+    )
+    val shimmerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha)
+
+    LazyVerticalGrid(
+        modifier = Modifier.fillMaxSize(),
+        columns = GridCells.Fixed(2),
+        contentPadding = PaddingValues(16.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        userScrollEnabled = false
+    ) {
+        items(6) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+            ) {
+                Column {
+                    // Cover placeholder
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(2f / 3f)
+                            .background(shimmerColor)
+                    )
+                    // Title placeholder
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(0.75f)
+                            .height(14.dp)
+                            .padding(start = 10.dp, top = 10.dp)
+                            .background(shimmerColor, RoundedCornerShape(4.dp))
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(0.5f)
+                            .height(10.dp)
+                            .padding(start = 10.dp, top = 6.dp, bottom = 10.dp)
+                            .background(shimmerColor, RoundedCornerShape(4.dp))
+                    )
+                    // Progress strip placeholder
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(3.dp)
+                            .background(shimmerColor.copy(alpha = alpha * 0.5f))
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun EmptyLibraryState(onImportClick: () -> Unit) {
+    // Entrance animation
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { visible = true }
+    val alpha by animateFloatAsState(
+        targetValue = if (visible) 1f else 0f,
+        animationSpec = tween(600),
+        label = "emptyAlpha"
+    )
+    val offsetY by animateDpAsState(
+        targetValue = if (visible) 0.dp else 24.dp,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy),
+        label = "emptyOffset"
+    )
+
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(32.dp),
+            .padding(32.dp)
+            .graphicsLayer {
+                this.alpha = alpha
+                translationY = offsetY.toPx()
+            },
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {

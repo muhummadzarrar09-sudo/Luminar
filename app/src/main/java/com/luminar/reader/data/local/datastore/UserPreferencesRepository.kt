@@ -7,6 +7,8 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.luminar.reader.data.model.AppTheme
@@ -34,7 +36,12 @@ data class UserPreferences(
     val fontScale: FontScale = FontScale.NORMAL,
     val defaultScrollMode: ScrollMode = ScrollMode.VERTICAL_SCROLL,
     val ollamaBaseUrl: String = DEFAULT_OLLAMA_BASE_URL,
-    val ollamaModel: String = DEFAULT_OLLAMA_MODEL
+    val ollamaModel: String = DEFAULT_OLLAMA_MODEL,
+    // Reading stats
+    val totalReadingTimeMinutes: Long = 0,
+    val totalBooksOpened: Int = 0,
+    val currentStreak: Int = 0,
+    val lastReadDate: String = "" // yyyy-MM-dd
 )
 
 @Singleton
@@ -58,7 +65,11 @@ class UserPreferencesRepository @Inject constructor(
                 fontScale = preferences[PreferenceKeys.FONT_SCALE].toFontScale(),
                 defaultScrollMode = preferences[PreferenceKeys.DEFAULT_SCROLL_MODE].toScrollMode(),
                 ollamaBaseUrl = preferences[PreferenceKeys.OLLAMA_BASE_URL] ?: DEFAULT_OLLAMA_BASE_URL,
-                ollamaModel = preferences[PreferenceKeys.OLLAMA_MODEL] ?: DEFAULT_OLLAMA_MODEL
+                ollamaModel = preferences[PreferenceKeys.OLLAMA_MODEL] ?: DEFAULT_OLLAMA_MODEL,
+                totalReadingTimeMinutes = preferences[PreferenceKeys.TOTAL_READING_TIME] ?: 0L,
+                totalBooksOpened = preferences[PreferenceKeys.TOTAL_BOOKS_OPENED] ?: 0,
+                currentStreak = preferences[PreferenceKeys.CURRENT_STREAK] ?: 0,
+                lastReadDate = preferences[PreferenceKeys.LAST_READ_DATE] ?: ""
             )
         }
 
@@ -104,6 +115,40 @@ class UserPreferencesRepository @Inject constructor(
         }
     }
 
+    suspend fun recordReadingSession(durationMinutes: Long) {
+        val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+            .format(java.util.Date())
+
+        context.userPreferencesDataStore.edit { preferences ->
+            val prevTime = preferences[PreferenceKeys.TOTAL_READING_TIME] ?: 0L
+            preferences[PreferenceKeys.TOTAL_READING_TIME] = prevTime + durationMinutes
+
+            val lastDate = preferences[PreferenceKeys.LAST_READ_DATE] ?: ""
+            if (lastDate != today) {
+                // New day — check if streak continues
+                val prevStreak = preferences[PreferenceKeys.CURRENT_STREAK] ?: 0
+                val yesterday = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+                    .format(java.util.Date(System.currentTimeMillis() - 86400000))
+
+                preferences[PreferenceKeys.CURRENT_STREAK] = if (lastDate == yesterday) {
+                    prevStreak + 1
+                } else if (lastDate.isEmpty()) {
+                    1
+                } else {
+                    1 // streak broken
+                }
+                preferences[PreferenceKeys.LAST_READ_DATE] = today
+            }
+        }
+    }
+
+    suspend fun incrementBooksOpened() {
+        context.userPreferencesDataStore.edit { preferences ->
+            val prev = preferences[PreferenceKeys.TOTAL_BOOKS_OPENED] ?: 0
+            preferences[PreferenceKeys.TOTAL_BOOKS_OPENED] = prev + 1
+        }
+    }
+
     private fun String?.toAppTheme(): AppTheme {
         return this
             ?.let { value -> runCatching { AppTheme.valueOf(value) }.getOrNull() }
@@ -130,5 +175,9 @@ class UserPreferencesRepository @Inject constructor(
         val DEFAULT_SCROLL_MODE = stringPreferencesKey("default_scroll_mode")
         val OLLAMA_BASE_URL = stringPreferencesKey("ollama_base_url")
         val OLLAMA_MODEL = stringPreferencesKey("ollama_model")
+        val TOTAL_READING_TIME = longPreferencesKey("total_reading_time_minutes")
+        val TOTAL_BOOKS_OPENED = intPreferencesKey("total_books_opened")
+        val CURRENT_STREAK = intPreferencesKey("current_streak")
+        val LAST_READ_DATE = stringPreferencesKey("last_read_date")
     }
 }

@@ -8,6 +8,7 @@ import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
+import com.luminar.reader.data.document.DocumentParser
 import com.luminar.reader.data.epub.EpubChapter
 import com.luminar.reader.data.epub.EpubParser
 import com.luminar.reader.data.local.db.BookDao
@@ -31,65 +32,81 @@ import android.graphics.Color as AndroidColor
 class BookRepositoryImpl @Inject constructor(
     @ApplicationContext private val context: Context,
     private val bookDao: BookDao,
-    private val epubParser: EpubParser
+    private val epubParser: EpubParser,
+    private val documentParser: DocumentParser
 ) : BookRepository {
 
     override fun getAllBooks(): Flow<List<Book>> = bookDao.getAllBooks()
-
     override fun getBookById(id: Long): Flow<Book?> = bookDao.getBookById(id)
-
     override fun getAllProgress(): Flow<List<ReadingProgress>> = bookDao.getAllProgress()
-
     override fun getProgress(bookId: Long): Flow<ReadingProgress?> = bookDao.getProgress(bookId)
-
     override suspend fun importPdf(uri: Uri): Long = importFile(uri)
 
     override suspend fun importFile(uri: Uri): Long = withContext(Dispatchers.IO) {
         val displayName = resolveDisplayName(uri)
         val extension = displayName.substringAfterLast('.', "").lowercase()
         val format = BookFormat.fromExtension(extension)
-
         val destination = createDestinationFile(extension.ifBlank { "txt" })
 
         try {
             copyUriToInternalFile(uri, destination)
 
-            when (format) {
-                BookFormat.PDF -> {
+            when {
+                format == BookFormat.PDF -> {
                     val metadata = readPdfMetadata(destination)
-                    val book = Book(
+                    bookDao.insertBook(Book(
                         title = displayName.toBookTitle(),
                         filePath = destination.absolutePath,
                         coverPath = metadata.coverPath,
                         format = BookFormat.PDF,
                         totalPages = metadata.pageCount
-                    )
-                    bookDao.insertBook(book)
+                    ))
                 }
 
-                BookFormat.EPUB -> {
+                format == BookFormat.EPUB -> {
                     val coversDir = File(context.filesDir, COVERS_DIRECTORY)
                     val epub = epubParser.parse(destination, coversDir)
-                    val book = Book(
+                    bookDao.insertBook(Book(
                         title = epub.title ?: displayName.toBookTitle(),
                         filePath = destination.absolutePath,
                         coverPath = epub.coverPath,
                         format = BookFormat.EPUB,
                         totalPages = epub.chapters.size.coerceAtLeast(1)
-                    )
-                    bookDao.insertBook(book)
+                    ))
                 }
 
-                else -> {
-                    val lineCount = countLines(destination)
-                    val book = Book(
+                format == BookFormat.CBZ -> {
+                    val pageCount = documentParser.getCbzImagePaths(destination).size
+                    bookDao.insertBook(Book(
+                        title = displayName.toBookTitle(),
+                        filePath = destination.absolutePath,
+                        coverPath = null,
+                        format = format,
+                        totalPages = pageCount.coerceAtLeast(1)
+                    ))
+                }
+
+                format.isDocumentFormat -> {
+                    val text = documentParser.parseToText(destination, extension)
+                    val lineCount = text.lines().count { it.isNotBlank() }
+                    bookDao.insertBook(Book(
                         title = displayName.toBookTitle(),
                         filePath = destination.absolutePath,
                         coverPath = null,
                         format = format,
                         totalPages = lineCount.coerceAtLeast(1)
-                    )
-                    bookDao.insertBook(book)
+                    ))
+                }
+
+                else -> {
+                    val lineCount = countLines(destination)
+                    bookDao.insertBook(Book(
+                        title = displayName.toBookTitle(),
+                        filePath = destination.absolutePath,
+                        coverPath = null,
+                        format = format,
+                        totalPages = lineCount.coerceAtLeast(1)
+                    ))
                 }
             }
         } catch (cancellation: CancellationException) {
@@ -110,6 +127,25 @@ class BookRepositoryImpl @Inject constructor(
         file.readText(Charsets.UTF_8)
     }
 
+    override suspend fun readDocumentContent(book: Book): String = withContext(Dispatchers.IO) {
+        val file = File(book.filePath)
+        if (!file.exists()) throw IOException("File not found: ${book.filePath}")
+        val extension = file.name.substringAfterLast('.', "").lowercase()
+        documentParser.parseToText(file, extension)
+    }
+
+    override suspend fun getComicImagePaths(book: Book): List<String> = withContext(Dispatchers.IO) {
+        val file = File(book.filePath)
+        if (!file.exists()) throw IOException("File not found: ${book.filePath}")
+        documentParser.getCbzImagePaths(file)
+    }
+
+    override fun getComicImageBytes(book: Book, entryPath: String): ByteArray {
+        val file = File(book.filePath)
+        if (!file.exists()) throw IOException("File not found: ${book.filePath}")
+        return documentParser.getCbzImageBytes(file, entryPath)
+    }
+
     override suspend fun readEpubChapters(book: Book): List<EpubChapter> = withContext(Dispatchers.IO) {
         val file = File(book.filePath)
         if (!file.exists()) throw IOException("File not found: ${book.filePath}")
@@ -125,32 +161,23 @@ class BookRepositoryImpl @Inject constructor(
         }
     }
 
-    override suspend fun saveProgress(
-        bookId: Long,
-        currentPage: Int,
-        scrollOffset: Float
-    ) {
-        bookDao.upsertProgress(
-            ReadingProgress(
-                bookId = bookId,
-                currentPage = currentPage.coerceAtLeast(0),
-                scrollOffset = scrollOffset,
-                lastReadAt = System.currentTimeMillis()
-            )
-        )
+    override suspend fun saveProgress(bookId: Long, currentPage: Int, scrollOffset: Float) {
+        bookDao.upsertProgress(ReadingProgress(
+            bookId = bookId,
+            currentPage = currentPage.coerceAtLeast(0),
+            scrollOffset = scrollOffset,
+            lastReadAt = System.currentTimeMillis()
+        ))
     }
 
     override suspend fun markBookOpened(bookId: Long) {
-        bookDao.updateLastOpenedAt(
-            bookId = bookId,
-            timestamp = System.currentTimeMillis()
-        )
+        bookDao.updateLastOpenedAt(bookId = bookId, timestamp = System.currentTimeMillis())
     }
 
+    // ─── Private helpers ─────────────────────────────────────
+
     private fun resolveDisplayName(uri: Uri): String {
-        if (uri.scheme == "file") {
-            return uri.path?.let(::File)?.name ?: DEFAULT_FILE_NAME
-        }
+        if (uri.scheme == "file") return uri.path?.let(::File)?.name ?: DEFAULT_FILE_NAME
         return context.contentResolver.query(
             uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null
         )?.use { cursor ->
@@ -160,8 +187,7 @@ class BookRepositoryImpl @Inject constructor(
     }
 
     private fun String.toBookTitle(): String {
-        val withoutExtension = substringBeforeLast('.', this)
-        return withoutExtension
+        return substringBeforeLast('.', this)
             .replace(Regex("[\\p{Cntrl}]"), " ")
             .replace(Regex("\\s+"), " ")
             .trim()
@@ -169,58 +195,67 @@ class BookRepositoryImpl @Inject constructor(
     }
 
     private fun createDestinationFile(extension: String): File {
-        val booksDirectory = File(context.filesDir, BOOKS_DIRECTORY).apply { mkdirs() }
-        return File(booksDirectory, "${UUID.randomUUID()}.$extension")
+        File(context.filesDir, BOOKS_DIRECTORY).mkdirs()
+        return File(File(context.filesDir, BOOKS_DIRECTORY), "${UUID.randomUUID()}.$extension")
     }
 
     private fun createCoverDestinationFile(): File {
-        val coversDirectory = File(context.filesDir, COVERS_DIRECTORY).apply { mkdirs() }
-        return File(coversDirectory, "${UUID.randomUUID()}.png")
+        File(context.filesDir, COVERS_DIRECTORY).mkdirs()
+        return File(File(context.filesDir, COVERS_DIRECTORY), "${UUID.randomUUID()}.png")
     }
 
     private fun copyUriToInternalFile(uri: Uri, destination: File) {
-        val inputStream = context.contentResolver.openInputStream(uri)
+        val input = context.contentResolver.openInputStream(uri)
             ?: throw IOException("Cannot open selected file")
-        inputStream.use { input ->
-            destination.outputStream().use { output -> input.copyTo(output) }
+
+        // Guard against extremely large files (500MB limit)
+        var totalBytes = 0L
+        val maxSize = 500L * 1024 * 1024
+
+        input.use { i ->
+            destination.outputStream().use { o ->
+                val buffer = ByteArray(8192)
+                var bytesRead: Int
+                while (i.read(buffer).also { bytesRead = it } != -1) {
+                    totalBytes += bytesRead
+                    if (totalBytes > maxSize) {
+                        destination.delete()
+                        throw IOException("File too large (>500 MB). Please use a smaller file.")
+                    }
+                    o.write(buffer, 0, bytesRead)
+                }
+            }
         }
     }
 
-    private fun countLines(file: File): Int {
-        return file.useLines { lines -> lines.count() }
-    }
+    private fun countLines(file: File): Int = file.useLines { it.count() }
 
     private fun readPdfMetadata(pdfFile: File): PdfMetadata {
-        val descriptor = ParcelFileDescriptor.open(pdfFile, ParcelFileDescriptor.MODE_READ_ONLY)
+        val fd = ParcelFileDescriptor.open(pdfFile, ParcelFileDescriptor.MODE_READ_ONLY)
         try {
-            val renderer = PdfRenderer(descriptor)
+            val renderer = PdfRenderer(fd)
             try {
-                val pageCount = renderer.pageCount
-                if (pageCount <= 0) throw IOException("PDF has no readable pages")
-                val coverPath = runCatching { renderFirstPageCover(renderer) }.getOrNull()
-                return PdfMetadata(pageCount = pageCount, coverPath = coverPath)
+                val count = renderer.pageCount
+                if (count <= 0) throw IOException("PDF has no readable pages")
+                val cover = runCatching { renderFirstPageCover(renderer) }.getOrNull()
+                return PdfMetadata(count, cover)
             } finally { renderer.close() }
-        } finally { descriptor.close() }
+        } finally { fd.close() }
     }
 
     private fun renderFirstPageCover(renderer: PdfRenderer): String {
         val page = renderer.openPage(0)
         try {
-            val w = page.width.coerceAtLeast(1)
-            val h = page.height.coerceAtLeast(1)
             val tw = 600
-            val th = (tw * (h.toFloat() / w.toFloat())).roundToInt().coerceAtLeast(1)
-            val bitmap = Bitmap.createBitmap(tw, th, Bitmap.Config.ARGB_8888)
+            val th = (tw * (page.height.coerceAtLeast(1).toFloat() / page.width.coerceAtLeast(1).toFloat())).roundToInt().coerceAtLeast(1)
+            val bmp = Bitmap.createBitmap(tw, th, Bitmap.Config.ARGB_8888)
             try {
-                Canvas(bitmap).drawColor(AndroidColor.WHITE)
-                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                val coverFile = createCoverDestinationFile()
-                coverFile.outputStream().use { out ->
-                    if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out))
-                        throw IOException("Unable to save cover thumbnail")
-                }
-                return coverFile.absolutePath
-            } finally { bitmap.recycle() }
+                Canvas(bmp).drawColor(AndroidColor.WHITE)
+                page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                val f = createCoverDestinationFile()
+                f.outputStream().use { if (!bmp.compress(Bitmap.CompressFormat.PNG, 100, it)) throw IOException("Cover save failed") }
+                return f.absolutePath
+            } finally { bmp.recycle() }
         } finally { page.close() }
     }
 
@@ -233,7 +268,4 @@ class BookRepositoryImpl @Inject constructor(
     }
 }
 
-class BookImportException(
-    message: String,
-    cause: Throwable? = null
-) : Exception(message, cause)
+class BookImportException(message: String, cause: Throwable? = null) : Exception(message, cause)

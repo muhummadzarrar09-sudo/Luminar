@@ -21,7 +21,39 @@ data class EpubMetadata(
 @Singleton
 class EpubParser @Inject constructor() {
 
+    private companion object Patterns {
+        val FULL_PATH = Regex("""full-path\s*=\s*"([^"]+)"""")
+        val ITEM_ID_HREF = Regex("""<item\s[^>]*id\s*=\s*"([^"]+)"[^>]*href\s*=\s*"([^"]+)"[^>]*/?>""")
+        val ITEM_HREF_ID = Regex("""<item\s[^>]*href\s*=\s*"([^"]+)"[^>]*id\s*=\s*"([^"]+)"[^>]*/?>""")
+        val ITEMREF = Regex("""<itemref\s[^>]*idref\s*=\s*"([^"]+)"[^>]*/?>""")
+        val COVER_META = Regex("""<meta\s[^>]*name\s*=\s*"cover"[^>]*content\s*=\s*"([^"]+)"[^>]*/?>""")
+        val COVER_PROPS = Regex("""<item\s[^>]*properties\s*=\s*"cover-image"[^>]*href\s*=\s*"([^"]+)"[^>]*/?>""")
+        val HEAD_BLOCK = Regex("<head[^>]*>[\\s\\S]*?</head>", RegexOption.IGNORE_CASE)
+        val BR_TAG = Regex("<br\\s*/?>", RegexOption.IGNORE_CASE)
+        val CLOSE_P = Regex("</p>", RegexOption.IGNORE_CASE)
+        val CLOSE_DIV = Regex("</div>", RegexOption.IGNORE_CASE)
+        val CLOSE_LI = Regex("</li>", RegexOption.IGNORE_CASE)
+        val LI_OPEN = Regex("<li[^>]*>", RegexOption.IGNORE_CASE)
+        val BOLD_OPEN = Regex("<(b|strong)[^>]*>", RegexOption.IGNORE_CASE)
+        val BOLD_CLOSE = Regex("</(b|strong)>", RegexOption.IGNORE_CASE)
+        val ITALIC_OPEN = Regex("<(i|em)[^>]*>", RegexOption.IGNORE_CASE)
+        val ITALIC_CLOSE = Regex("</(i|em)>", RegexOption.IGNORE_CASE)
+        val HTML_TAG = Regex("<[^>]+>")
+        val MULTI_NEWLINE = Regex("\n{3,}")
+        val NUMERIC_ENTITY = Regex("&#(\\d+);")
+        val HEX_ENTITY = Regex("&#x([0-9a-fA-F]+);")
+        val TITLE_TAG = Regex("<title[^>]*>(.*?)</title>", RegexOption.IGNORE_CASE)
+        val H1_TAG = Regex("<h1[^>]*>(.*?)</h1>", RegexOption.IGNORE_CASE)
+        val H_OPEN = (1..6).map { Regex("<h$it[^>]*>", RegexOption.IGNORE_CASE) }
+        val H_CLOSE = (1..6).map { Regex("</h$it>", RegexOption.IGNORE_CASE) }
+    }
+
     fun parse(epubFile: File, coversDir: File): EpubMetadata {
+        // Basic validation
+        if (!epubFile.exists()) throw IllegalArgumentException("EPUB file not found")
+        if (epubFile.length() < 100) throw IllegalArgumentException("File too small to be a valid EPUB")
+        if (epubFile.length() > 500 * 1024 * 1024) throw IllegalArgumentException("EPUB too large (>500 MB)")
+
         val zip = ZipFile(epubFile)
         try {
             val opfPath = findOpfPath(zip)
@@ -76,26 +108,18 @@ class EpubParser @Inject constructor() {
             ?: throw IllegalStateException("Not a valid EPUB: missing META-INF/container.xml")
 
         val containerXml = zip.getInputStream(containerEntry).bufferedReader().readText()
-
-        // Extract full-path from <rootfile full-path="..." />
-        val regex = Regex("""full-path\s*=\s*"([^"]+)"""")
-        return regex.find(containerXml)?.groupValues?.get(1)
+        return FULL_PATH.find(containerXml)?.groupValues?.get(1)
             ?: throw IllegalStateException("Cannot find OPF path in container.xml")
     }
 
     // ─── OPF parsing ─────────────────────────────────────────
 
     private fun parseManifest(opf: String): Map<String, String> {
-        // id → href mapping
         val map = mutableMapOf<String, String>()
-        val regex = Regex("""<item\s[^>]*id\s*=\s*"([^"]+)"[^>]*href\s*=\s*"([^"]+)"[^>]*/?>""")
-        val regexAlt = Regex("""<item\s[^>]*href\s*=\s*"([^"]+)"[^>]*id\s*=\s*"([^"]+)"[^>]*/?>""")
-
-        for (match in regex.findAll(opf)) {
+        for (match in ITEM_ID_HREF.findAll(opf)) {
             map[match.groupValues[1]] = match.groupValues[2]
         }
-        // Some EPUBs have href before id
-        for (match in regexAlt.findAll(opf)) {
+        for (match in ITEM_HREF_ID.findAll(opf)) {
             val href = match.groupValues[1]
             val id = match.groupValues[2]
             if (id !in map) map[id] = href
@@ -104,9 +128,7 @@ class EpubParser @Inject constructor() {
     }
 
     private fun parseSpine(opf: String): List<String> {
-        // <itemref idref="chapter1" />
-        val regex = Regex("""<itemref\s[^>]*idref\s*=\s*"([^"]+)"[^>]*/?>""")
-        return regex.findAll(opf).map { it.groupValues[1] }.toList()
+        return ITEMREF.findAll(opf).map { it.groupValues[1] }.toList()
     }
 
     // ─── Cover image extraction ──────────────────────────────
@@ -118,9 +140,7 @@ class EpubParser @Inject constructor() {
         opfDir: String,
         coversDir: File
     ): String? {
-        // Strategy 1: <meta name="cover" content="cover-image" />
-        val coverIdRegex = Regex("""<meta\s[^>]*name\s*=\s*"cover"[^>]*content\s*=\s*"([^"]+)"[^>]*/?>""")
-        val coverId = coverIdRegex.find(opf)?.groupValues?.get(1)
+        val coverId = COVER_META.find(opf)?.groupValues?.get(1)
 
         if (coverId != null) {
             val href = manifest[coverId]
@@ -130,9 +150,7 @@ class EpubParser @Inject constructor() {
             }
         }
 
-        // Strategy 2: item with properties="cover-image"
-        val coverPropsRegex = Regex("""<item\s[^>]*properties\s*=\s*"cover-image"[^>]*href\s*=\s*"([^"]+)"[^>]*/?>""")
-        val coverHref = coverPropsRegex.find(opf)?.groupValues?.get(1)
+        val coverHref = COVER_PROPS.find(opf)?.groupValues?.get(1)
         if (coverHref != null) {
             val path = if (opfDir.isNotEmpty()) "$opfDir/$coverHref" else coverHref
             return extractImage(zip, path, coversDir)
@@ -168,36 +186,24 @@ class EpubParser @Inject constructor() {
 
     private fun htmlToPlainText(html: String): String {
         var text = html
+        text = HEAD_BLOCK.replace(text, "")
+        text = BR_TAG.replace(text, "\n")
+        text = CLOSE_P.replace(text, "\n\n")
+        text = CLOSE_DIV.replace(text, "\n")
+        text = CLOSE_LI.replace(text, "\n")
 
-        // Remove everything inside <head>...</head>
-        text = text.replace(Regex("<head[^>]*>[\\s\\S]*?</head>", RegexOption.IGNORE_CASE), "")
-
-        // Convert block elements to newlines
-        text = text.replace(Regex("<br\\s*/?>", RegexOption.IGNORE_CASE), "\n")
-        text = text.replace(Regex("</p>", RegexOption.IGNORE_CASE), "\n\n")
-        text = text.replace(Regex("</div>", RegexOption.IGNORE_CASE), "\n")
-        text = text.replace(Regex("</li>", RegexOption.IGNORE_CASE), "\n")
-        text = text.replace(Regex("</h[1-6]>", RegexOption.IGNORE_CASE), "\n\n")
-
-        // Heading markers: inject markdown-style # for rendering
         for (level in 1..6) {
             val prefix = "#".repeat(level)
-            text = text.replace(Regex("<h$level[^>]*>", RegexOption.IGNORE_CASE), "\n$prefix ")
+            text = H_OPEN[level - 1].replace(text, "\n$prefix ")
+            text = H_CLOSE[level - 1].replace(text, "\n\n")
         }
 
-        // List items → bullet
-        text = text.replace(Regex("<li[^>]*>", RegexOption.IGNORE_CASE), "- ")
-
-        // Bold → **
-        text = text.replace(Regex("<(b|strong)[^>]*>", RegexOption.IGNORE_CASE), "**")
-        text = text.replace(Regex("</(b|strong)>", RegexOption.IGNORE_CASE), "**")
-
-        // Italic → *
-        text = text.replace(Regex("<(i|em)[^>]*>", RegexOption.IGNORE_CASE), "*")
-        text = text.replace(Regex("</(i|em)>", RegexOption.IGNORE_CASE), "*")
-
-        // Strip all remaining tags
-        text = text.replace(Regex("<[^>]+>"), "")
+        text = LI_OPEN.replace(text, "- ")
+        text = BOLD_OPEN.replace(text, "**")
+        text = BOLD_CLOSE.replace(text, "**")
+        text = ITALIC_OPEN.replace(text, "*")
+        text = ITALIC_CLOSE.replace(text, "*")
+        text = HTML_TAG.replace(text, "")
 
         // Decode common HTML entities
         text = text
@@ -209,31 +215,28 @@ class EpubParser @Inject constructor() {
             .replace("&apos;", "'")
             .replace("&nbsp;", " ")
             .replace("&#160;", " ")
-            .replace(Regex("&#(\\d+);")) { match ->
+            .replace(NUMERIC_ENTITY) { match ->
                 val code = match.groupValues[1].toIntOrNull()
-                if (code != null) String(Character.toChars(code)) else match.value
+                if (code != null) runCatching { String(Character.toChars(code)) }.getOrDefault(match.value) else match.value
             }
-            .replace(Regex("&#x([0-9a-fA-F]+);")) { match ->
+            .replace(HEX_ENTITY) { match ->
                 val code = match.groupValues[1].toIntOrNull(16)
-                if (code != null) String(Character.toChars(code)) else match.value
+                if (code != null) runCatching { String(Character.toChars(code)) }.getOrDefault(match.value) else match.value
             }
 
-        // Collapse excessive blank lines
-        text = text.replace(Regex("\n{3,}"), "\n\n")
+        text = MULTI_NEWLINE.replace(text, "\n\n")
 
         return text.trim()
     }
 
     private fun extractHtmlTitle(html: String): String? {
-        // Try <title> tag
-        val titleMatch = Regex("<title[^>]*>(.*?)</title>", RegexOption.IGNORE_CASE).find(html)
+        val titleMatch = TITLE_TAG.find(html)
         val title = titleMatch?.groupValues?.get(1)?.trim()
         if (!title.isNullOrBlank() && title.length < 200) return title
 
-        // Try first <h1>
-        val h1Match = Regex("<h1[^>]*>(.*?)</h1>", RegexOption.IGNORE_CASE).find(html)
+        val h1Match = H1_TAG.find(html)
         val h1 = h1Match?.groupValues?.get(1)
-            ?.replace(Regex("<[^>]+>"), "")?.trim()
+            ?.replace(HTML_TAG, "")?.trim()
         if (!h1.isNullOrBlank() && h1.length < 200) return h1
 
         return null

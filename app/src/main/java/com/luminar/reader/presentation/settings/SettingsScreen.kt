@@ -215,6 +215,35 @@ fun SettingsScreen(
             }
 
             item {
+                SectionHeader(text = "READING STATS")
+            }
+
+            item {
+                PreferenceGroup {
+                    StaticPreferenceRow(
+                        title = "Total reading time",
+                        subtitle = formatReadingTime(uiState.totalReadingTimeMinutes)
+                    )
+
+                    PreferenceDivider()
+
+                    StaticPreferenceRow(
+                        title = "Books opened",
+                        subtitle = "${uiState.totalBooksOpened} books"
+                    )
+
+                    PreferenceDivider()
+
+                    StaticPreferenceRow(
+                        title = "Current streak",
+                        subtitle = if (uiState.currentStreak > 0)
+                            "${uiState.currentStreak} day${if (uiState.currentStreak != 1) "s" else ""} 🔥"
+                        else "Start reading today!"
+                    )
+                }
+            }
+
+            item {
                 SectionHeader(text = "ABOUT")
             }
 
@@ -228,8 +257,29 @@ fun SettingsScreen(
                     PreferenceDivider()
 
                     StaticPreferenceRow(
+                        title = "Supported formats",
+                        subtitle = "PDF, EPUB, DOCX, XLSX, PPTX, MOBI, AZW3, CBZ, FB2, RTF, CHM, XPS, ODT, Markdown, Code, and 15+ more"
+                    )
+
+                    PreferenceDivider()
+
+                    StaticPreferenceRow(
                         title = "Built with Luminar Reader",
-                        subtitle = "Local-first personal reading"
+                        subtitle = "Local-first · Privacy-focused · No ads ever"
+                    )
+
+                    PreferenceDivider()
+
+                    StaticPreferenceRow(
+                        title = "Security",
+                        subtitle = "All files stored locally · No data collection · No analytics · HTTPS enforced"
+                    )
+
+                    PreferenceDivider()
+
+                    StaticPreferenceRow(
+                        title = "Architecture",
+                        subtitle = "Kotlin · Jetpack Compose · Material 3 · Room · DataStore · Hilt · Zero external parser dependencies"
                     )
                 }
             }
@@ -380,6 +430,15 @@ private fun DisabledAiSettings(
         ) {
             Text(text = "Connect")
         }
+    }
+}
+
+private fun formatReadingTime(minutes: Long): String {
+    return when {
+        minutes < 1 -> "Just getting started"
+        minutes < 60 -> "$minutes min"
+        minutes < 1440 -> "${minutes / 60}h ${minutes % 60}m"
+        else -> "${minutes / 1440}d ${(minutes % 1440) / 60}h"
     }
 }
 

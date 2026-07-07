@@ -5,6 +5,7 @@ import androidx.room.Database
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import com.luminar.reader.data.model.Book
+import com.luminar.reader.data.model.Bookmark
 import com.luminar.reader.data.model.BookInsight
 import com.luminar.reader.data.model.ReadingProgress
 
@@ -12,9 +13,10 @@ import com.luminar.reader.data.model.ReadingProgress
     entities = [
         Book::class,
         ReadingProgress::class,
-        BookInsight::class
+        BookInsight::class,
+        Bookmark::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = true
 )
 @TypeConverters(Converters::class)

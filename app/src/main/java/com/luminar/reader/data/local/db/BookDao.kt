@@ -8,6 +8,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Upsert
 import com.luminar.reader.data.model.Book
+import com.luminar.reader.data.model.Bookmark
 import com.luminar.reader.data.model.ReadingProgress
 import kotlinx.coroutines.flow.Flow
 
@@ -37,4 +38,14 @@ interface BookDao {
 
     @Query("UPDATE books SET lastOpenedAt = :timestamp WHERE id = :bookId")
     suspend fun updateLastOpenedAt(bookId: Long, timestamp: Long)
+
+    // Bookmarks
+    @Query("SELECT * FROM bookmarks WHERE bookId = :bookId ORDER BY page ASC")
+    fun getBookmarks(bookId: Long): Flow<List<Bookmark>>
+
+    @Insert
+    suspend fun insertBookmark(bookmark: Bookmark): Long
+
+    @Delete
+    suspend fun deleteBookmark(bookmark: Bookmark)
 }

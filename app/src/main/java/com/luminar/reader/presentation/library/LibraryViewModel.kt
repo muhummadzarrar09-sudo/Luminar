@@ -4,6 +4,7 @@ package com.luminar.reader.presentation.library
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.luminar.reader.data.error.ErrorReporter
 import com.luminar.reader.data.model.Book
 import com.luminar.reader.data.model.BookFormat
 import com.luminar.reader.data.model.ReadingProgress
@@ -33,6 +34,8 @@ enum class FormatFilter(val label: String) {
     ALL("All"),
     PDF("PDF"),
     EPUB("EPUB"),
+    COMICS("Comics"),
+    DOCS("Docs"),
     MARKDOWN("Markdown"),
     CODE("Code"),
     TEXT("Text"),
@@ -49,6 +52,8 @@ data class LibraryUiState(
     val isLoading: Boolean = true,
     val isImporting: Boolean = false,
     val error: String? = null,
+    val lastErrorThrowable: Throwable? = null,
+    val showErrorReport: Boolean = false,
     val sortOrder: SortOrder = SortOrder.RECENT,
     val formatFilter: FormatFilter = FormatFilter.ALL,
     val searchQuery: String = "",
@@ -64,11 +69,14 @@ data class LibraryUiState(
                 FormatFilter.ALL -> result
                 FormatFilter.PDF -> result.filter { it.format == BookFormat.PDF }
                 FormatFilter.EPUB -> result.filter { it.format == BookFormat.EPUB }
+                FormatFilter.COMICS -> result.filter { it.format.isComicBook }
+                FormatFilter.DOCS -> result.filter { it.format.isDocumentFormat }
                 FormatFilter.MARKDOWN -> result.filter { it.format == BookFormat.MARKDOWN }
                 FormatFilter.CODE -> result.filter { it.format == BookFormat.CODE }
                 FormatFilter.TEXT -> result.filter { it.format == BookFormat.TXT || it.format == BookFormat.LOG }
                 FormatFilter.OTHER -> result.filter {
                     it.format != BookFormat.PDF && it.format != BookFormat.EPUB &&
+                    !it.format.isComicBook && !it.format.isDocumentFormat &&
                     it.format != BookFormat.MARKDOWN && it.format != BookFormat.CODE &&
                     it.format != BookFormat.TXT && it.format != BookFormat.LOG
                 }
@@ -99,11 +107,14 @@ data class LibraryUiState(
             counts[FormatFilter.ALL] = allBooks.size
             counts[FormatFilter.PDF] = allBooks.count { it.format == BookFormat.PDF }
             counts[FormatFilter.EPUB] = allBooks.count { it.format == BookFormat.EPUB }
+            counts[FormatFilter.COMICS] = allBooks.count { it.format.isComicBook }
+            counts[FormatFilter.DOCS] = allBooks.count { it.format.isDocumentFormat }
             counts[FormatFilter.MARKDOWN] = allBooks.count { it.format == BookFormat.MARKDOWN }
             counts[FormatFilter.CODE] = allBooks.count { it.format == BookFormat.CODE }
             counts[FormatFilter.TEXT] = allBooks.count { it.format == BookFormat.TXT || it.format == BookFormat.LOG }
             counts[FormatFilter.OTHER] = allBooks.size -
                 (counts[FormatFilter.PDF]!! + counts[FormatFilter.EPUB]!! +
+                 counts[FormatFilter.COMICS]!! + counts[FormatFilter.DOCS]!! +
                  counts[FormatFilter.MARKDOWN]!! + counts[FormatFilter.CODE]!! +
                  counts[FormatFilter.TEXT]!!)
             return counts
@@ -119,6 +130,9 @@ sealed interface LibraryEvent {
     data class UpdateSearchQuery(val query: String) : LibraryEvent
     data object ToggleSearch : LibraryEvent
     data object ToggleViewMode : LibraryEvent
+    data object ShowErrorReport : LibraryEvent
+    data object DismissErrorReport : LibraryEvent
+    data class SendErrorReport(val userNote: String) : LibraryEvent
 
     @Suppress("unused")
     companion object {
@@ -135,7 +149,8 @@ sealed interface LibraryEffect {
 class LibraryViewModel @Inject constructor(
     private val getBooksUseCase: GetBooksUseCase,
     private val importBookUseCase: ImportBookUseCase,
-    private val bookRepository: BookRepository
+    private val bookRepository: BookRepository,
+    private val errorReporter: ErrorReporter
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(LibraryUiState())
@@ -164,6 +179,27 @@ class LibraryViewModel @Inject constructor(
             }
             LibraryEvent.ToggleViewMode -> _uiState.update {
                 it.copy(viewMode = if (it.viewMode == ViewMode.GRID) ViewMode.LIST else ViewMode.GRID)
+            }
+            LibraryEvent.ShowErrorReport -> _uiState.update { it.copy(showErrorReport = true) }
+            LibraryEvent.DismissErrorReport -> _uiState.update {
+                it.copy(showErrorReport = false, error = null, lastErrorThrowable = null)
+            }
+            is LibraryEvent.SendErrorReport -> sendErrorReport(event.userNote)
+        }
+    }
+
+    private fun sendErrorReport(userNote: String) {
+        val state = _uiState.value
+        viewModelScope.launch {
+            errorReporter.report(
+                errorType = "library_error",
+                errorMessage = state.error ?: "Unknown",
+                throwable = state.lastErrorThrowable,
+                context = "Library — importing or loading books",
+                userNote = userNote
+            )
+            _uiState.update {
+                it.copy(showErrorReport = false, error = null, lastErrorThrowable = null)
             }
         }
     }
@@ -209,8 +245,13 @@ class LibraryViewModel @Inject constructor(
                 _effects.emit(LibraryEffect.ShowSnackbar("File added"))
             }.onFailure { throwable ->
                 val message = throwable.message ?: "Unable to import file"
-                _uiState.update { it.copy(error = message) }
-                _effects.emit(LibraryEffect.ShowSnackbar(message))
+                _uiState.update {
+                    it.copy(
+                        error = message,
+                        lastErrorThrowable = throwable,
+                        showErrorReport = true
+                    )
+                }
             }
 
             _uiState.update { it.copy(isImporting = false) }

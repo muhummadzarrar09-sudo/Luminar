@@ -15,7 +15,10 @@ interface BookRepository {
     suspend fun importPdf(uri: Uri): Long
     suspend fun importFile(uri: Uri): Long
     suspend fun readTextContent(book: Book): String
+    suspend fun readDocumentContent(book: Book): String
     suspend fun readEpubChapters(book: Book): List<EpubChapter>
+    suspend fun getComicImagePaths(book: Book): List<String>
+    fun getComicImageBytes(book: Book, entryPath: String): ByteArray
     suspend fun deleteBook(book: Book)
     suspend fun saveProgress(bookId: Long, currentPage: Int, scrollOffset: Float = 0f)
     suspend fun markBookOpened(bookId: Long)
