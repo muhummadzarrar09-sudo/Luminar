@@ -486,7 +486,6 @@ private fun RecentlyOpenedRow(
 // ─── Bottom navigation bar ───────────────────────────────
 
 @Composable
-@Composable
 private fun LibraryBottomBar(
     uiState: LibraryUiState,
     onToggleSearch: () -> Unit,
