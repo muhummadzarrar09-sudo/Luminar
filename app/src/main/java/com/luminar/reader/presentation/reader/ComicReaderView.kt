@@ -2,6 +2,7 @@
 package com.luminar.reader.presentation.reader
 
 import android.graphics.BitmapFactory
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -32,6 +33,7 @@ import com.luminar.reader.data.model.AppTheme
 import com.luminar.reader.presentation.theme.readerBackgroundColor
 import java.io.File
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ComicReaderView(
     comicFile: File,

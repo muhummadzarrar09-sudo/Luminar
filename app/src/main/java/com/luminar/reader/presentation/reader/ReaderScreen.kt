@@ -158,9 +158,10 @@ fun ReaderScreen(
     }
 
     // Error report dialog
-    if (uiState.showErrorReport && uiState.error != null) {
+    val currentError = uiState.error
+    if (uiState.showErrorReport && currentError != null) {
         ErrorReportDialog(
-            errorMessage = uiState.error,
+            errorMessage = currentError,
             onDismiss = { viewModel.onEvent(ReaderEvent.DismissErrorReport) },
             onSendReport = { note -> viewModel.onEvent(ReaderEvent.SendErrorReport(note)) }
         )

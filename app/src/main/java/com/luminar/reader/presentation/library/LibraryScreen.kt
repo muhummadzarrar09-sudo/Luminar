@@ -163,9 +163,10 @@ fun LibraryScreen(
     }
 
     // Error report dialog
-    if (uiState.showErrorReport && uiState.error != null) {
+    val currentError = uiState.error
+    if (uiState.showErrorReport && currentError != null) {
         ErrorReportDialog(
-            errorMessage = uiState.error,
+            errorMessage = currentError,
             onDismiss = { viewModel.onEvent(LibraryEvent.DismissErrorReport) },
             onSendReport = { note -> viewModel.onEvent(LibraryEvent.SendErrorReport(note)) }
         )
@@ -462,6 +463,7 @@ private fun LibraryToolbar(
 
 // ─── Grid view ───────────────────────────────────────────────
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun LibraryGrid(
     uiState: LibraryUiState,
@@ -483,9 +485,8 @@ private fun LibraryGrid(
             key = { it.id }
         ) { book ->
             BookCard(
-                modifier = Modifier.animateItem(
-                    fadeInSpec = tween(300),
-                    fadeOutSpec = tween(300)
+                modifier = Modifier.animateItemPlacement(
+                    animationSpec = tween(300)
                 ),
                 book = book,
                 progress = uiState.progressByBookId[book.id].progressFraction(book.totalPages),
