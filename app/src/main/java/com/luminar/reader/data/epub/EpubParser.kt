@@ -207,7 +207,6 @@ class EpubParser @Inject constructor() {
 
         // Decode common HTML entities
         text = text
-            .replace("&amp;", "&")
             .replace("&lt;", "<")
             .replace("&gt;", ">")
             .replace("&quot;", "\"")
@@ -215,6 +214,7 @@ class EpubParser @Inject constructor() {
             .replace("&apos;", "'")
             .replace("&nbsp;", " ")
             .replace("&#160;", " ")
+            .replace("&amp;", "&") // MUST be last to avoid double-decoding
             .replace(NUMERIC_ENTITY) { match ->
                 val code = match.groupValues[1].toIntOrNull()
                 if (code != null) runCatching { String(Character.toChars(code)) }.getOrDefault(match.value) else match.value

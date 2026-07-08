@@ -222,10 +222,12 @@ class DocumentParser @Inject constructor() {
             val isUnderline = run.contains("<w:u ") && !run.contains("""w:val="none"""")
             val isStrike = run.contains("<w:strike/>") || run.contains("<w:strike ")
 
-            // Extract text
-            val text = TEXT_RUN.findAll(run)
-                .map { it.groupValues[1] }
-                .joinToString("")
+            // Extract text and decode XML entities
+            val text = decodeXmlEntities(
+                TEXT_RUN.findAll(run)
+                    .map { it.groupValues[1] }
+                    .joinToString("")
+            )
 
             if (text.isNotEmpty()) {
                 var formatted = text
@@ -251,10 +253,12 @@ class DocumentParser @Inject constructor() {
         for (rowMatch in rowRegex.findAll(tableXml)) {
             val cells = mutableListOf<String>()
             for (cellMatch in cellRegex.findAll(rowMatch.value)) {
-                val cellText = TEXT_RUN.findAll(cellMatch.value)
-                    .map { it.groupValues[1] }
-                    .joinToString(" ")
-                    .trim()
+                val cellText = decodeXmlEntities(
+                    TEXT_RUN.findAll(cellMatch.value)
+                        .map { it.groupValues[1] }
+                        .joinToString(" ")
+                        .trim()
+                )
                 cells.add(cellText.ifBlank { " " })
             }
             if (cells.isNotEmpty()) rows.add(cells)
@@ -297,10 +301,12 @@ class DocumentParser @Inject constructor() {
                 val ssXml = zip.getInputStream(ssEntry).bufferedReader().readText()
                 val siRegex = Regex("<si>[\\s\\S]*?</si>", RegexOption.DOT_MATCHES_ALL)
                 for (siMatch in siRegex.findAll(ssXml)) {
-                    val texts = Regex("<t[^>]*>(.*?)</t>", RegexOption.DOT_MATCHES_ALL)
-                        .findAll(siMatch.value)
-                        .map { it.groupValues[1] }
-                        .joinToString("")
+                    val texts = decodeXmlEntities(
+                        Regex("<t[^>]*>(.*?)</t>", RegexOption.DOT_MATCHES_ALL)
+                            .findAll(siMatch.value)
+                            .map { it.groupValues[1] }
+                            .joinToString("")
+                    )
                     sharedStrings.add(texts)
                 }
             }
@@ -389,7 +395,7 @@ class DocumentParser @Inject constructor() {
                 // Extract all text from <a:t> tags
                 val textRegex = Regex("<a:t>(.*?)</a:t>", RegexOption.DOT_MATCHES_ALL)
                 val texts = textRegex.findAll(slideXml)
-                    .map { it.groupValues[1].trim() }
+                    .map { decodeXmlEntities(it.groupValues[1].trim()) }
                     .filter { it.isNotBlank() }
                     .toList()
 
@@ -923,7 +929,7 @@ class DocumentParser @Inject constructor() {
                     // XPS uses <Glyphs UnicodeString="..."/> for text
                     val glyphTexts = Regex("""UnicodeString\s*=\s*"([^"]+)"""")
                         .findAll(xml)
-                        .map { it.groupValues[1] }
+                        .map { decodeXmlEntities(it.groupValues[1]) }
                         .toList()
 
                     if (glyphTexts.isNotEmpty()) {
@@ -1008,9 +1014,22 @@ class DocumentParser @Inject constructor() {
 
     // ─── Helpers ─────────────────────────────────────────────
 
+    /**
+     * Decode XML entities in the correct order.
+     * MUST decode &amp; LAST to avoid double-decoding (e.g. &amp;lt; → &lt; → <).
+     */
+    private fun decodeXmlEntities(text: String): String {
+        return text
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&apos;", "'")
+            .replace("&#39;", "'")
+            .replace("&amp;", "&") // MUST be last
+    }
+
     private fun decodeHtmlEntities(text: String): String {
         return text
-            .replace("&amp;", "&")
             .replace("&lt;", "<")
             .replace("&gt;", ">")
             .replace("&quot;", "\"")
@@ -1018,6 +1037,7 @@ class DocumentParser @Inject constructor() {
             .replace("&apos;", "'")
             .replace("&nbsp;", " ")
             .replace("&#160;", " ")
+            .replace("&amp;", "&") // MUST be last
             .replace(NUMERIC_ENTITY) { match ->
                 val code = match.groupValues[1].toIntOrNull()
                 if (code != null) runCatching { String(Character.toChars(code)) }.getOrDefault(match.value)
