@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -51,6 +52,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -100,6 +102,8 @@ import com.luminar.reader.data.model.ReadingProgress
 import com.luminar.reader.presentation.components.ErrorReportDialog
 import com.luminar.reader.presentation.theme.LuminarGold
 import com.luminar.reader.presentation.theme.LuminarTitleFont
+import com.luminar.reader.presentation.theme.Spacing
+import com.luminar.reader.presentation.theme.Radius
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -172,8 +176,8 @@ fun LibraryScreen(
                         Text(
                             text = "Luminar",
                             fontFamily = LuminarTitleFont,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 26.sp,
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.headlineMedium,
                             color = MaterialTheme.colorScheme.onBackground
                         )
                     }
@@ -330,24 +334,38 @@ private fun ContinueReadingCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .padding(horizontal = Spacing.lg, vertical = Spacing.sm)
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(Radius.lg),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
-        )
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(14.dp),
+                .height(IntrinsicSize.Min)
+        ) {
+            // Gold left accent stripe
+            Box(
+                modifier = Modifier
+                    .width(4.dp)
+                    .fillMaxHeight()
+                    .background(LuminarGold)
+            )
+
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Cover thumbnail
             Box(
                 modifier = Modifier
                     .size(width = 48.dp, height = 64.dp)
-                    .clip(RoundedCornerShape(8.dp))
+                    .clip(RoundedCornerShape(Radius.sm))
                     .background(LuminarGold.copy(alpha = 0.15f)),
                 contentAlignment = Alignment.Center
             ) {
@@ -374,7 +392,7 @@ private fun ContinueReadingCard(
                 Text(
                     text = "Continue reading",
                     color = LuminarGold,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
@@ -409,13 +427,14 @@ private fun ContinueReadingCard(
             }
 
             // Arrow
-            Text(
-                text = "→",
-                color = LuminarGold,
-                fontSize = 20.sp,
-                modifier = Modifier.padding(start = 8.dp)
+            Icon(
+                painter = painterResource(R.drawable.ic_chevron_right_24),
+                contentDescription = null,
+                modifier = Modifier.padding(start = 8.dp).size(24.dp),
+                tint = LuminarGold
             )
-        }
+            } // inner Row
+        } // outer Row
     }
 }
 
@@ -429,15 +448,14 @@ private fun RecentlyOpenedRow(
             text = "Recently opened",
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold
+            style = MaterialTheme.typography.labelMedium
         )
 
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 4.dp),
+                .padding(horizontal = Spacing.lg, vertical = Spacing.xs),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             books.forEach { book ->
@@ -449,7 +467,7 @@ private fun RecentlyOpenedRow(
                     modifier = Modifier
                         .width(56.dp)
                         .clickable { onBookClick(book) },
-                    shape = RoundedCornerShape(8.dp),
+                    shape = RoundedCornerShape(Radius.sm),
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.surface
                     )
@@ -457,7 +475,7 @@ private fun RecentlyOpenedRow(
                     Box(
                         modifier = Modifier
                             .size(width = 56.dp, height = 76.dp)
-                            .clip(RoundedCornerShape(8.dp))
+                            .clip(RoundedCornerShape(Radius.sm))
                             .background(LuminarGold.copy(alpha = 0.12f)),
                         contentAlignment = Alignment.Center
                     ) {
@@ -493,15 +511,21 @@ private fun LibraryBottomBar(
     onOpenSettings: () -> Unit,
     onImport: () -> Unit
 ) {
-    Surface(
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 3.dp
-    ) {
+    Column {
+        // Top divider
+        HorizontalDivider(
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+            thickness = 0.5.dp
+        )
+        Surface(
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 3.dp
+        ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .navigationBarsPadding()
-                .padding(horizontal = 8.dp, vertical = 4.dp),
+                .padding(horizontal = 8.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -525,31 +549,36 @@ private fun LibraryBottomBar(
             // View toggle
             BottomBarItem(
                 icon = {
-                    Text(
-                        text = if (uiState.viewMode == ViewMode.GRID) "☰" else "⊞",
-                        fontSize = 20.sp
+                    Icon(
+                        painter = painterResource(
+                            if (uiState.viewMode == ViewMode.GRID) R.drawable.ic_view_list_24
+                            else R.drawable.ic_grid_view_24
+                        ),
+                        contentDescription = null,
+                        modifier = Modifier.size(22.dp)
                     )
                 },
                 label = if (uiState.viewMode == ViewMode.GRID) "List" else "Grid",
                 onClick = onToggleViewMode
             )
 
-            // Import (center, prominent)
+            // Import (center, prominent — larger, elevated)
             BottomBarItem(
                 icon = {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .background(LuminarGold, shape = androidx.compose.foundation.shape.CircleShape)
-                            .padding(8.dp),
-                        contentAlignment = Alignment.Center
+                    androidx.compose.material3.Surface(
+                        modifier = Modifier.size(48.dp),
+                        shape = androidx.compose.foundation.shape.CircleShape,
+                        color = LuminarGold,
+                        shadowElevation = 4.dp
                     ) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_add_24),
-                            contentDescription = "Import",
-                            tint = Color(0xFF171100),
-                            modifier = Modifier.size(20.dp)
-                        )
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_add_24),
+                                contentDescription = "Import",
+                                tint = Color(0xFF171100),
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
                     }
                 },
                 label = "Import",
@@ -559,7 +588,11 @@ private fun LibraryBottomBar(
             // View toggle (placeholder for future stats)
             BottomBarItem(
                 icon = {
-                    Text(text = "📊", fontSize = 20.sp)
+                    Icon(
+                        painter = painterResource(R.drawable.ic_bar_chart_24),
+                        contentDescription = null,
+                        modifier = Modifier.size(22.dp)
+                    )
                 },
                 label = "Stats",
                 onClick = onOpenSettings // for now, opens settings where stats live
@@ -578,6 +611,7 @@ private fun LibraryBottomBar(
                 onClick = onOpenSettings
             )
         }
+        }
     }
 }
 
@@ -588,19 +622,39 @@ private fun BottomBarItem(
     isActive: Boolean = false,
     onClick: () -> Unit
 ) {
+    val activeAlpha by animateFloatAsState(
+        targetValue = if (isActive) 1f else 0f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "navIndicator"
+    )
+
     Column(
         modifier = Modifier
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(Radius.md))
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
-        icon()
+        // M3 Expressive active indicator pill
+        Box(
+            modifier = Modifier
+                .background(
+                    color = LuminarGold.copy(alpha = activeAlpha * 0.15f),
+                    shape = RoundedCornerShape(Radius.lg)
+                )
+                .padding(horizontal = Spacing.lg, vertical = Spacing.xs),
+            contentAlignment = Alignment.Center
+        ) {
+            icon()
+        }
         Text(
             text = label,
             color = if (isActive) LuminarGold else MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 10.sp,
+            style = MaterialTheme.typography.labelSmall,
             fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
             maxLines = 1
         )
@@ -658,7 +712,7 @@ private fun LibraryToolbar(
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 4.dp),
+                .padding(horizontal = Spacing.lg, vertical = Spacing.xs),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             FormatFilter.entries.forEach { filter ->
@@ -693,7 +747,7 @@ private fun LibraryToolbar(
             Text(
                 text = "${uiState.books.size} file${if (uiState.books.size != 1) "s" else ""}",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 13.sp
+                style = MaterialTheme.typography.labelMedium
             )
 
             Spacer(modifier = Modifier.weight(1f))
@@ -704,7 +758,7 @@ private fun LibraryToolbar(
                     Text(
                         text = "Sort: ${uiState.sortOrder.label}",
                         color = LuminarGold,
-                        fontSize = 13.sp
+                        style = MaterialTheme.typography.labelMedium
                     )
                 }
                 DropdownMenu(
@@ -746,7 +800,7 @@ private fun LibraryGrid(
         state = gridState,
         modifier = Modifier.fillMaxSize(),
         columns = GridCells.Fixed(2),
-        contentPadding = PaddingValues(16.dp),
+        contentPadding = PaddingValues(Spacing.lg),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
@@ -756,7 +810,10 @@ private fun LibraryGrid(
         ) { book ->
             BookCard(
                 modifier = Modifier.animateItemPlacement(
-                    animationSpec = tween(300)
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioLowBouncy,
+                        stiffness = Spring.StiffnessMediumLow
+                    )
                 ),
                 book = book,
                 progress = uiState.progressByBookId[book.id].progressFraction(book.totalPages),
@@ -779,7 +836,7 @@ private fun LibraryList(
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+        contentPadding = PaddingValues(horizontal = Spacing.lg, vertical = Spacing.sm),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         items(
@@ -893,6 +950,7 @@ private fun BookCard(
         book.coverPath?.let(::File)?.takeIf { it.exists() }
     }
     val fileSize = remember(book.filePath) { formatFileSize(File(book.filePath)) }
+    val formatAccent = remember(book.format) { formatAccentColor(book.format) }
 
     // Press scale animation
     var isPressed by remember { mutableStateOf(false) }
@@ -920,7 +978,7 @@ private fun BookCard(
                     onLongPress = { onLongClick() }
                 )
             },
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(Radius.md),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
@@ -945,6 +1003,15 @@ private fun BookCard(
                 if (!fileExists) {
                     MissingFileOverlay(onRemove = onRemoveMissingBook)
                 }
+
+                // Format accent bar at top
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(3.dp)
+                        .align(Alignment.TopCenter)
+                        .background(formatAccent)
+                )
 
                 if (book.format != BookFormat.PDF) {
                     FormatBadge(
@@ -1088,7 +1155,7 @@ private fun LibraryLoadingSkeleton() {
     LazyVerticalGrid(
         modifier = Modifier.fillMaxSize(),
         columns = GridCells.Fixed(2),
-        contentPadding = PaddingValues(16.dp),
+        contentPadding = PaddingValues(Spacing.lg),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
         userScrollEnabled = false
@@ -1096,7 +1163,7 @@ private fun LibraryLoadingSkeleton() {
         items(6) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(Radius.md),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
@@ -1223,6 +1290,22 @@ private fun DeleteBookDialog(
 }
 
 // ─── Helpers ─────────────────────────────────────────────────
+
+private fun formatAccentColor(format: BookFormat): Color {
+    return when (format) {
+        BookFormat.PDF -> Color(0xFFE53935)       // red
+        BookFormat.EPUB, BookFormat.MOBI, BookFormat.AZW3, BookFormat.FB2, BookFormat.PDB -> Color(0xFF1E88E5) // blue
+        BookFormat.DOCX, BookFormat.DOC, BookFormat.ODT, BookFormat.RTF -> Color(0xFF2979FF) // blue
+        BookFormat.XLSX, BookFormat.ODS, BookFormat.CSV -> Color(0xFF43A047) // green
+        BookFormat.PPTX, BookFormat.ODP, BookFormat.PPT -> Color(0xFFFF7043) // orange
+        BookFormat.CBZ, BookFormat.CBR, BookFormat.CBT -> Color(0xFFAB47BC) // purple
+        BookFormat.MARKDOWN -> Color(0xFF78909C)  // blue-gray
+        BookFormat.CODE -> Color(0xFF66BB6A)      // green
+        BookFormat.JSON, BookFormat.XML -> Color(0xFFFF8F00) // amber
+        BookFormat.HTML -> Color(0xFFEF6C00)      // deep orange
+        else -> LuminarGold.copy(alpha = 0.5f)
+    }
+}
 
 private fun ReadingProgress?.progressFraction(totalPages: Int): Float {
     if (this == null || totalPages <= 1) return 0f

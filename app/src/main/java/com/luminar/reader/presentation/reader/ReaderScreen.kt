@@ -7,7 +7,8 @@ import android.content.ContextWrapper
 import android.view.MotionEvent
 import android.view.WindowManager
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -62,6 +63,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -84,6 +86,7 @@ import com.luminar.reader.R
 import com.luminar.reader.data.model.AppTheme
 import com.luminar.reader.data.model.BookFormat
 import com.luminar.reader.data.model.Bookmark
+import com.luminar.reader.data.model.RenderingMode
 import com.luminar.reader.presentation.components.ErrorReportDialog
 import com.luminar.reader.presentation.theme.LuminarGold
 import com.luminar.reader.presentation.theme.next
@@ -93,8 +96,6 @@ import com.luminar.reader.presentation.theme.readerControlsContentColor
 import com.luminar.reader.presentation.theme.usesPdfNightMode
 import java.io.File
 import kotlin.math.roundToInt
-
-private const val CONTROLS_ANIMATION_DURATION_MILLIS = 300
 
 @Composable
 fun ReaderScreen(
@@ -238,6 +239,7 @@ fun ReaderScreen(
                         TextReaderView(
                             content = textContent,
                             format = renderFormat,
+                            renderingMode = book.format.renderingMode,
                             theme = uiState.currentTheme,
                             fontScale = uiState.fontScale,
                             searchQuery = uiState.searchQuery,
@@ -326,7 +328,8 @@ fun ReaderScreen(
                         onToggle = { viewModel.onEvent(ReaderEvent.ToggleTts) },
                         onSkipBack = { viewModel.onEvent(ReaderEvent.TtsSkipBackward) },
                         onSkipForward = { viewModel.onEvent(ReaderEvent.TtsSkipForward) },
-                        onStop = { viewModel.ttsController.stop() }
+                        onStop = { viewModel.ttsController.stop() },
+                        onCycleProfile = { viewModel.ttsController.cycleVoiceProfile() }
                     )
                     }
                 }
@@ -451,31 +454,34 @@ private fun ReaderControlsOverlay(
     AnimatedVisibility(
         visible = uiState.showControls,
         enter = fadeIn(
-            animationSpec = tween(
-                durationMillis = CONTROLS_ANIMATION_DURATION_MILLIS,
-                easing = FastOutSlowInEasing
-            )
+            animationSpec = spring(stiffness = Spring.StiffnessMedium)
         ) + slideInVertically(
-            animationSpec = tween(
-                durationMillis = CONTROLS_ANIMATION_DURATION_MILLIS,
-                easing = FastOutSlowInEasing
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioLowBouncy,
+                stiffness = Spring.StiffnessMedium
             ),
-            initialOffsetY = { -it / 4 }
+            initialOffsetY = { -it / 3 }
         ),
         exit = fadeOut(
-            animationSpec = tween(
-                durationMillis = CONTROLS_ANIMATION_DURATION_MILLIS,
-                easing = FastOutSlowInEasing
-            )
+            animationSpec = spring(stiffness = Spring.StiffnessHigh)
         ) + slideOutVertically(
-            animationSpec = tween(
-                durationMillis = CONTROLS_ANIMATION_DURATION_MILLIS,
-                easing = FastOutSlowInEasing
-            ),
-            targetOffsetY = { -it / 4 }
+            animationSpec = spring(stiffness = Spring.StiffnessHigh),
+            targetOffsetY = { -it / 3 }
         )
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
+            // Scrim — semi-transparent overlay for glassmorphism depth
+            val scrimColor = when (uiState.currentTheme) {
+                AppTheme.DARK_AMOLED -> Color.Black.copy(alpha = 0.45f)
+                AppTheme.SEPIA -> Color(0xFF2E2418).copy(alpha = 0.25f)
+                AppTheme.LIGHT -> Color.Black.copy(alpha = 0.2f)
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(scrimColor)
+            )
+
             ReaderTopControls(
                 modifier = Modifier.align(Alignment.TopCenter),
                 uiState = uiState,
@@ -572,6 +578,41 @@ private fun ReaderTopControls(
                     )
                 }
 
+                // TOC button (ebook mode only)
+                if (uiState.chapterTitles.size > 1) {
+                    var showToc by remember { mutableStateOf(false) }
+                    Box {
+                        IconButton(onClick = { showToc = !showToc }) {
+                            Icon(painter = painterResource(R.drawable.ic_toc_24), contentDescription = "Contents", modifier = Modifier.size(22.dp), tint = contentColor)
+                        }
+                        DropdownMenu(
+                            expanded = showToc,
+                            onDismissRequest = { showToc = false }
+                        ) {
+                            uiState.chapterTitles.forEachIndexed { idx, title ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = title,
+                                            fontWeight = if (idx == uiState.currentChapterIndex)
+                                                FontWeight.Bold else FontWeight.Normal,
+                                            color = if (idx == uiState.currentChapterIndex)
+                                                LuminarGold else MaterialTheme.colorScheme.onSurface,
+                                            fontSize = 14.sp,
+                                            maxLines = 2
+                                        )
+                                    },
+                                    onClick = {
+                                        showToc = false
+                                        // TODO: Jump to chapter block index
+                                        onInteraction()
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+
                 // TTS button
                 IconButton(
                     onClick = {
@@ -579,7 +620,7 @@ private fun ReaderTopControls(
                         onToggleTts()
                     }
                 ) {
-                    Text(text = "🔊", fontSize = 18.sp)
+                    Icon(painter = painterResource(R.drawable.ic_volume_up_24), contentDescription = "Read aloud", modifier = Modifier.size(22.dp), tint = contentColor)
                 }
             }
 
@@ -598,9 +639,14 @@ private fun ReaderTopControls(
                     }
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = if (uiState.isCurrentPageBookmarked) "🔖" else "🏷️",
-                            fontSize = 18.sp
+                        Icon(
+                            painter = painterResource(
+                                if (uiState.isCurrentPageBookmarked) R.drawable.ic_bookmark_24
+                                else R.drawable.ic_bookmark_border_24
+                            ),
+                            contentDescription = "Bookmark",
+                            modifier = Modifier.size(22.dp),
+                            tint = if (uiState.isCurrentPageBookmarked) LuminarGold else contentColor
                         )
                         if (uiState.bookmarks.isNotEmpty()) {
                             Text(
@@ -757,20 +803,40 @@ private fun ReaderBottomControls(
                     }
                 }
 
-                // Word / char count + session time
-                val sessionMinutes = remember { (System.currentTimeMillis()) }
-                val elapsedMinutes = ((System.currentTimeMillis() - sessionMinutes) / 60_000).toInt()
+                // Chapter progress + time remaining (ebook mode)
+                if (uiState.chapterProgressLabel.isNotEmpty() || uiState.timeRemainingLabel.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        if (uiState.chapterProgressLabel.isNotEmpty()) {
+                            Text(
+                                text = uiState.chapterProgressLabel,
+                                color = LuminarGold.copy(alpha = 0.8f),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        if (uiState.timeRemainingLabel.isNotEmpty()) {
+                            Text(
+                                text = uiState.timeRemainingLabel,
+                                color = contentColor.copy(alpha = 0.45f),
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                }
 
+                // Word / char count
                 Text(
                     text = buildString {
                         append("${formatCount(uiState.wordCount)} words  ·  ${formatCount(uiState.charCount)} chars")
-                        if (elapsedMinutes > 0) {
-                            append("  ·  ${elapsedMinutes}m reading")
-                        }
                     },
                     modifier = Modifier.padding(bottom = 2.dp),
                     color = contentColor.copy(alpha = 0.5f),
-                    fontSize = 12.sp
+                    fontSize = 11.sp
                 )
             } else {
                 TextButton(
@@ -1056,7 +1122,8 @@ private fun TtsControlBar(
     onToggle: () -> Unit,
     onSkipBack: () -> Unit,
     onSkipForward: () -> Unit,
-    onStop: () -> Unit
+    onStop: () -> Unit,
+    onCycleProfile: () -> Unit
 ) {
     val containerColor = theme.readerControlsContainerColor()
     val contentColor = theme.readerControlsContentColor()
@@ -1064,51 +1131,82 @@ private fun TtsControlBar(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 24.dp, vertical = 8.dp)
+            .padding(horizontal = 16.dp, vertical = 8.dp)
             .padding(bottom = 80.dp),
         color = containerColor,
         contentColor = contentColor,
         shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
         shadowElevation = 8.dp
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceEvenly
+                .padding(horizontal = 12.dp, vertical = 8.dp)
         ) {
-            // Stop
-            IconButton(onClick = onStop) {
-                Text(text = "⏹", fontSize = 18.sp)
-            }
-
-            // Skip back
-            IconButton(onClick = onSkipBack) {
-                Text(text = "⏮", fontSize = 18.sp)
-            }
-
-            // Play/Pause
-            IconButton(onClick = onToggle) {
+            // Controls row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                IconButton(onClick = onStop) {
+                    Icon(painter = painterResource(R.drawable.ic_stop_24), contentDescription = "Stop", modifier = Modifier.size(22.dp), tint = contentColor)
+                }
+                IconButton(onClick = onSkipBack) {
+                    Icon(painter = painterResource(R.drawable.ic_skip_previous_24), contentDescription = "Back", modifier = Modifier.size(22.dp), tint = contentColor)
+                }
+                IconButton(onClick = onToggle) {
+                    Icon(
+                        painter = painterResource(
+                            if (ttsState.isSpeaking) R.drawable.ic_pause_24
+                            else R.drawable.ic_play_arrow_24
+                        ),
+                        contentDescription = if (ttsState.isSpeaking) "Pause" else "Play",
+                        modifier = Modifier.size(28.dp),
+                        tint = contentColor
+                    )
+                }
+                IconButton(onClick = onSkipForward) {
+                    Icon(painter = painterResource(R.drawable.ic_skip_next_24), contentDescription = "Forward", modifier = Modifier.size(22.dp), tint = contentColor)
+                }
+                // Progress
                 Text(
-                    text = if (ttsState.isSpeaking) "⏸" else "▶",
-                    fontSize = 22.sp
+                    text = if (ttsState.totalChunks > 0)
+                        "${ttsState.currentChunkIndex + 1}/${ttsState.totalChunks}"
+                    else "",
+                    color = contentColor.copy(alpha = 0.6f),
+                    fontSize = 12.sp
                 )
             }
 
-            // Skip forward
-            IconButton(onClick = onSkipForward) {
-                Text(text = "⏭", fontSize = 18.sp)
+            // Voice profile row
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                TextButton(onClick = onCycleProfile) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_mic_24),
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = LuminarGold
+                    )
+                    Text(
+                        text = " ${ttsState.voiceProfile.displayName}",
+                        color = LuminarGold,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+                Text(
+                    text = "  ×${String.format("%.1f", ttsState.speed)}",
+                    color = contentColor.copy(alpha = 0.45f),
+                    fontSize = 11.sp
+                )
             }
-
-            // Progress
-            Text(
-                text = if (ttsState.totalChunks > 0)
-                    "${ttsState.currentChunkIndex + 1}/${ttsState.totalChunks}"
-                else "",
-                color = contentColor.copy(alpha = 0.6f),
-                fontSize = 12.sp
-            )
         }
     }
 }

@@ -37,6 +37,7 @@ data class UserPreferences(
     val defaultScrollMode: ScrollMode = ScrollMode.VERTICAL_SCROLL,
     val ollamaBaseUrl: String = DEFAULT_OLLAMA_BASE_URL,
     val ollamaModel: String = DEFAULT_OLLAMA_MODEL,
+    val hasSeenOnboarding: Boolean = false,
     // Reading stats
     val totalReadingTimeMinutes: Long = 0,
     val totalBooksOpened: Int = 0,
@@ -66,6 +67,7 @@ class UserPreferencesRepository @Inject constructor(
                 defaultScrollMode = preferences[PreferenceKeys.DEFAULT_SCROLL_MODE].toScrollMode(),
                 ollamaBaseUrl = preferences[PreferenceKeys.OLLAMA_BASE_URL] ?: DEFAULT_OLLAMA_BASE_URL,
                 ollamaModel = preferences[PreferenceKeys.OLLAMA_MODEL] ?: DEFAULT_OLLAMA_MODEL,
+                hasSeenOnboarding = preferences[PreferenceKeys.HAS_SEEN_ONBOARDING] ?: false,
                 totalReadingTimeMinutes = preferences[PreferenceKeys.TOTAL_READING_TIME] ?: 0L,
                 totalBooksOpened = preferences[PreferenceKeys.TOTAL_BOOKS_OPENED] ?: 0,
                 currentStreak = preferences[PreferenceKeys.CURRENT_STREAK] ?: 0,
@@ -179,5 +181,12 @@ class UserPreferencesRepository @Inject constructor(
         val TOTAL_BOOKS_OPENED = intPreferencesKey("total_books_opened")
         val CURRENT_STREAK = intPreferencesKey("current_streak")
         val LAST_READ_DATE = stringPreferencesKey("last_read_date")
+        val HAS_SEEN_ONBOARDING = booleanPreferencesKey("has_seen_onboarding")
+    }
+
+    suspend fun setOnboardingComplete() {
+        context.userPreferencesDataStore.edit { preferences ->
+            preferences[PreferenceKeys.HAS_SEEN_ONBOARDING] = true
+        }
     }
 }

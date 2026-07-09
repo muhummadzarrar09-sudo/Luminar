@@ -2,6 +2,7 @@
 package com.luminar.reader.navigation
 
 sealed class Screen(val route: String) {
+    data object Onboarding : Screen("onboarding")
     data object Library : Screen("library")
     data object Settings : Screen("settings")
 

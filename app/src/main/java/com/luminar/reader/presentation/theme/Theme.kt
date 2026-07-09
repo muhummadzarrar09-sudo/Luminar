@@ -82,10 +82,11 @@ fun AppTheme.readerBackgroundColor(): Color {
 }
 
 fun AppTheme.readerControlsContainerColor(): Color {
+    // Glassmorphism: ~75% opacity for frosted glass feel
     return when (this) {
-        AppTheme.DARK_AMOLED -> Color(0xE6000000)
-        AppTheme.SEPIA -> Color(0xEEF4ECD8)
-        AppTheme.LIGHT -> Color(0xEEFFFFFF)
+        AppTheme.DARK_AMOLED -> Color(0xBF0A0A0A)  // 75% dark
+        AppTheme.SEPIA -> Color(0xC0F4ECD8)          // 75% warm
+        AppTheme.LIGHT -> Color(0xC0FFFFFF)           // 75% white
     }
 }
 

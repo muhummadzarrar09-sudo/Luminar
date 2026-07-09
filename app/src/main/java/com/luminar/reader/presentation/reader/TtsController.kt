@@ -13,12 +13,37 @@ import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/**
+ * Voice profiles — preset speed/pitch combos for different reading styles.
+ */
+enum class VoiceProfile(
+    val displayName: String,
+    val speed: Float,
+    val pitch: Float
+) {
+    NATURAL("Natural", 1.0f, 1.0f),
+    SLOW("Slow & Clear", 0.75f, 0.95f),
+    FAST("Fast Reader", 1.35f, 1.0f),
+    DEEP("Deep Voice", 0.9f, 0.75f),
+    HIGH("High Voice", 1.0f, 1.3f),
+    NARRATOR("Narrator", 0.85f, 0.9f),
+    SPEED_RUN("Speed Run", 1.75f, 1.05f);
+
+    fun next(): VoiceProfile {
+        val values = entries
+        return values[(values.indexOf(this) + 1) % values.size]
+    }
+}
+
 data class TtsState(
     val isAvailable: Boolean = false,
     val isSpeaking: Boolean = false,
     val currentChunkIndex: Int = 0,
     val totalChunks: Int = 0,
-    val speed: Float = 1.0f
+    val speed: Float = 1.0f,
+    val pitch: Float = 1.0f,
+    val voiceProfile: VoiceProfile = VoiceProfile.NATURAL,
+    val availableVoiceCount: Int = 0
 )
 
 @Singleton
@@ -37,6 +62,11 @@ class TtsController @Inject constructor(
             _state.update { it.copy(isAvailable = status == TextToSpeech.SUCCESS) }
             if (status == TextToSpeech.SUCCESS) {
                 tts?.language = Locale.getDefault()
+
+                // Count available voices
+                val voiceCount = runCatching { tts?.voices?.size ?: 0 }.getOrDefault(0)
+                _state.update { it.copy(availableVoiceCount = voiceCount) }
+
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {
                         _state.update { it.copy(isSpeaking = true) }
@@ -63,7 +93,6 @@ class TtsController @Inject constructor(
     fun startSpeaking(text: String, fromChunk: Int = 0) {
         if (tts == null || !_state.value.isAvailable) return
 
-        // Split text into chunks at sentence boundaries (~500 chars max per chunk)
         chunks = splitIntoChunks(text)
         currentIndex = fromChunk.coerceIn(0, chunks.lastIndex.coerceAtLeast(0))
 
@@ -73,6 +102,8 @@ class TtsController @Inject constructor(
                 currentChunkIndex = currentIndex
             )
         }
+
+        applyVoiceProfile(_state.value.voiceProfile)
 
         if (chunks.isNotEmpty()) {
             speakChunk(currentIndex)
@@ -119,10 +150,43 @@ class TtsController @Inject constructor(
         _state.update { it.copy(speed = clamped) }
     }
 
+    fun setPitch(pitch: Float) {
+        val clamped = pitch.coerceIn(0.5f, 2.0f)
+        tts?.setPitch(clamped)
+        _state.update { it.copy(pitch = clamped) }
+    }
+
+    fun setVoiceProfile(profile: VoiceProfile) {
+        applyVoiceProfile(profile)
+        _state.update { it.copy(voiceProfile = profile) }
+        // If currently speaking, restart with new profile
+        if (_state.value.isSpeaking) {
+            tts?.stop()
+            speakChunk(currentIndex)
+        }
+    }
+
+    fun cycleVoiceProfile() {
+        val next = _state.value.voiceProfile.next()
+        setVoiceProfile(next)
+    }
+
     fun shutdown() {
         tts?.stop()
         tts?.shutdown()
         tts = null
+    }
+
+    private fun applyVoiceProfile(profile: VoiceProfile) {
+        tts?.setSpeechRate(profile.speed)
+        tts?.setPitch(profile.pitch)
+        _state.update {
+            it.copy(
+                speed = profile.speed,
+                pitch = profile.pitch,
+                voiceProfile = profile
+            )
+        }
     }
 
     private fun speakChunk(index: Int) {
@@ -148,7 +212,6 @@ class TtsController @Inject constructor(
                 break
             }
 
-            // Find the best split point (sentence boundary)
             var splitAt = remaining.lastIndexOf(". ", maxLen)
             if (splitAt < maxLen / 2) splitAt = remaining.lastIndexOf("! ", maxLen)
             if (splitAt < maxLen / 2) splitAt = remaining.lastIndexOf("? ", maxLen)

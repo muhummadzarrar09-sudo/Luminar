@@ -49,7 +49,14 @@ class MainActivity : ComponentActivity() {
             ).value
 
             LuminarReaderTheme(selectedTheme = preferences.selectedTheme) {
-                LuminarNavGraph()
+                LuminarNavGraph(
+                    hasSeenOnboarding = preferences.hasSeenOnboarding,
+                    onOnboardingComplete = {
+                        lifecycleScope.launch {
+                            userPreferencesRepository.setOnboardingComplete()
+                        }
+                    }
+                )
             }
         }
     }

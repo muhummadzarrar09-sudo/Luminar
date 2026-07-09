@@ -43,6 +43,19 @@ enum class BookFormat(val displayName: String) {
     val isComicBook: Boolean
         get() = this in listOf(CBZ, CBR, CBT)
 
+    val renderingMode: RenderingMode
+        get() = when (this) {
+            DOCX, ODT, RTF, DOC -> RenderingMode.DOCUMENT
+            XLSX, ODS, CSV -> RenderingMode.SPREADSHEET
+            PPTX, ODP, PPT -> RenderingMode.PRESENTATION
+            EPUB, MOBI, AZW3, FB2, PDB -> RenderingMode.EBOOK
+            MARKDOWN -> RenderingMode.MARKDOWN
+            CODE, JSON, XML, HTML -> RenderingMode.CODE
+            CBZ, CBR, CBT -> RenderingMode.COMIC
+            PDF -> RenderingMode.PDF
+            else -> RenderingMode.PLAIN_TEXT
+        }
+
     companion object {
         fun fromExtension(extension: String): BookFormat {
             return when (extension.lowercase()) {

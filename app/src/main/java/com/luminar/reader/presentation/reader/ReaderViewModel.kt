@@ -50,6 +50,9 @@ data class ReaderUiState(
     val fontScale: FontScale = FontScale.NORMAL,
     val wordCount: Int = 0,
     val charCount: Int = 0,
+    // Ebook chapter info
+    val chapterTitles: List<String> = emptyList(),
+    val currentChapterIndex: Int = 0,
     // Search state
     val isSearchActive: Boolean = false,
     val searchQuery: String = "",
@@ -61,6 +64,36 @@ data class ReaderUiState(
     val bookmarks: List<Bookmark> = emptyList(),
     val isCurrentPageBookmarked: Boolean = false
 ) {
+    val totalChapters: Int
+        get() = chapterTitles.size
+
+    val currentChapterTitle: String
+        get() = chapterTitles.getOrElse(currentChapterIndex) { "" }
+
+    val chapterProgressLabel: String
+        get() = if (totalChapters > 1)
+            "Ch. ${currentChapterIndex + 1} of $totalChapters"
+        else ""
+
+    /** Estimated minutes remaining based on ~230 WPM average reading speed */
+    val estimatedMinutesLeft: Int
+        get() {
+            if (wordCount <= 0 || totalPages <= 0) return 0
+            val progress = if (totalPages > 0) (currentPage + 1).toFloat() / totalPages else 0f
+            val wordsLeft = (wordCount * (1f - progress)).toInt().coerceAtLeast(0)
+            return (wordsLeft / 230).coerceAtLeast(0)
+        }
+
+    val timeRemainingLabel: String
+        get() {
+            val mins = estimatedMinutesLeft
+            return when {
+                mins <= 0 -> ""
+                mins < 60 -> "~${mins}m left"
+                else -> "~${mins / 60}h ${mins % 60}m left"
+            }
+        }
+
     val isTextBased: Boolean
         get() = book?.format?.isTextBased == true
 
@@ -456,7 +489,8 @@ class ReaderViewModel @Inject constructor(
                         textContent = fullText,
                         wordCount = words,
                         charCount = chars,
-                        totalPages = chapters.size.coerceAtLeast(1)
+                        totalPages = chapters.size.coerceAtLeast(1),
+                        chapterTitles = chapters.map { ch -> ch.title }
                     )
                 }
             } catch (throwable: Throwable) {

@@ -14,6 +14,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.luminar.reader.presentation.library.LibraryScreen
+import com.luminar.reader.presentation.onboarding.OnboardingScreen
 import com.luminar.reader.presentation.reader.ReaderScreen
 import com.luminar.reader.presentation.settings.SettingsScreen
 
@@ -23,12 +24,32 @@ private val EaseInCubic = CubicBezierEasing(0.32f, 0f, 0.67f, 0f)
 
 @Composable
 fun LuminarNavGraph(
+    hasSeenOnboarding: Boolean,
+    onOnboardingComplete: () -> Unit,
     navController: NavHostController = rememberNavController()
 ) {
     NavHost(
         navController = navController,
-        startDestination = Screen.Library.route
+        startDestination = if (hasSeenOnboarding) Screen.Library.route else Screen.Onboarding.route
     ) {
+        // ─── Onboarding ──────────────────────────────────
+        composable(
+            route = Screen.Onboarding.route,
+            exitTransition = {
+                fadeOut(animationSpec = tween(NAV_DURATION))
+            }
+        ) {
+            OnboardingScreen(
+                onComplete = {
+                    onOnboardingComplete()
+                    navController.navigate(Screen.Library.route) {
+                        popUpTo(Screen.Onboarding.route) { inclusive = true }
+                    }
+                }
+            )
+        }
+
+        // ─── Library ─────────────────────────────────────
         composable(
             route = Screen.Library.route,
             exitTransition = {
@@ -64,6 +85,7 @@ fun LuminarNavGraph(
             )
         }
 
+        // ─── Reader ──────────────────────────────────────
         composable(
             route = Screen.Reader.route,
             arguments = listOf(
@@ -99,6 +121,7 @@ fun LuminarNavGraph(
             )
         }
 
+        // ─── Settings ────────────────────────────────────
         composable(
             route = Screen.Settings.route,
             enterTransition = {

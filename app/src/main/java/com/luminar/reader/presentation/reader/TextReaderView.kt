@@ -3,8 +3,11 @@ package com.luminar.reader.presentation.reader
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
@@ -15,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -40,6 +44,7 @@ import androidx.compose.ui.unit.sp
 import com.luminar.reader.data.model.AppTheme
 import com.luminar.reader.data.model.BookFormat
 import com.luminar.reader.data.model.FontScale
+import com.luminar.reader.data.model.RenderingMode
 import com.luminar.reader.presentation.theme.LuminarGold
 import com.luminar.reader.presentation.theme.readerBackgroundColor
 import com.luminar.reader.presentation.theme.readerControlsContentColor
@@ -51,6 +56,7 @@ import kotlinx.coroutines.flow.debounce
 fun TextReaderView(
     content: String,
     format: BookFormat,
+    renderingMode: RenderingMode = format.renderingMode,
     theme: AppTheme,
     fontScale: FontScale,
     searchQuery: String,
@@ -63,7 +69,19 @@ fun TextReaderView(
     onScrollToBlockConsumed: () -> Unit,
     initialScrollPosition: Int
 ) {
-    val backgroundColor = theme.readerBackgroundColor()
+    // Document mode uses paper-white regardless of theme
+    val isDocumentMode = renderingMode == RenderingMode.DOCUMENT
+    val isCodeMode = renderingMode == RenderingMode.CODE
+
+    val backgroundColor = if (isDocumentMode) {
+        when (theme) {
+            AppTheme.DARK_AMOLED -> Color(0xFF1A1A1A)  // dark gray, not pure black
+            AppTheme.SEPIA -> Color(0xFFF0E6CE)
+            AppTheme.LIGHT -> Color(0xFFF0F0F0)  // light gray, paper sits on top
+        }
+    } else {
+        theme.readerBackgroundColor()
+    }
     val textColor = theme.readerControlsContentColor()
     val listState = rememberLazyListState()
 
@@ -83,6 +101,7 @@ fun TextReaderView(
                 is TextBlock.Paragraph -> block.spans.text
                 is TextBlock.CodeBlock -> block.code
                 is TextBlock.BulletItem -> block.spans.text
+                is TextBlock.TaskItem -> block.spans.text
                 is TextBlock.NumberedItem -> block.spans.text
                 is TextBlock.Quote -> block.spans.text
                 is TextBlock.PlainLine -> block.text
@@ -133,24 +152,53 @@ fun TextReaderView(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(
-                    start = 20.dp,
-                    end = 20.dp,
+                    start = if (isDocumentMode) 12.dp else 20.dp,
+                    end = if (isDocumentMode) 12.dp else 20.dp,
                     top = if (isSearchActive) 120.dp else 72.dp,
                     bottom = 120.dp
                 )
             ) {
+                // Code mode: file info header
+                if (isCodeMode) {
+                    item {
+                        CodeFileHeader(
+                            lineCount = content.lines().size,
+                            charCount = content.length,
+                            textColor = textColor
+                        )
+                    }
+                }
+
                 items(blocks.size) { index ->
                     val block = blocks[index]
                     val isThisTheCurrentMatch = isSearchActive &&
                         currentMatchBlockIndex == index
-                    RenderBlock(
-                        block = block,
-                        textColor = textColor,
-                        theme = theme,
-                        fontScale = fontScale,
-                        searchQuery = if (isSearchActive) searchQuery else "",
-                        isCurrentMatch = isThisTheCurrentMatch
-                    )
+
+                    if (isDocumentMode) {
+                        // Paper card wrapper for document mode
+                        DocumentPaperCard(theme = theme) {
+                            RenderBlock(
+                                block = block,
+                                textColor = if (theme == AppTheme.DARK_AMOLED) Color(0xFFE0E0E0)
+                                           else Color(0xFF1A1A1A),
+                                theme = theme,
+                                fontScale = fontScale,
+                                renderingMode = renderingMode,
+                                searchQuery = if (isSearchActive) searchQuery else "",
+                                isCurrentMatch = isThisTheCurrentMatch
+                            )
+                        }
+                    } else {
+                        RenderBlock(
+                            block = block,
+                            textColor = textColor,
+                            theme = theme,
+                            fontScale = fontScale,
+                            renderingMode = renderingMode,
+                            searchQuery = if (isSearchActive) searchQuery else "",
+                            isCurrentMatch = isThisTheCurrentMatch
+                        )
+                    }
                 }
             }
         }
@@ -164,6 +212,7 @@ internal sealed interface TextBlock {
     data class Paragraph(val spans: AnnotatedString) : TextBlock
     data class CodeBlock(val code: String, val language: String?) : TextBlock
     data class BulletItem(val spans: AnnotatedString, val indent: Int = 0) : TextBlock
+    data class TaskItem(val spans: AnnotatedString, val checked: Boolean) : TextBlock
     data class NumberedItem(val number: String, val spans: AnnotatedString) : TextBlock
     data class Quote(val spans: AnnotatedString) : TextBlock
     data class Table(val headers: List<String>, val rows: List<List<String>>) : TextBlock
@@ -179,12 +228,16 @@ private fun RenderBlock(
     textColor: Color,
     theme: AppTheme,
     fontScale: FontScale,
+    renderingMode: RenderingMode = RenderingMode.MARKDOWN,
     searchQuery: String,
     isCurrentMatch: Boolean
 ) {
     val scale = fontScale.multiplier
     val highlightColor = LuminarGold.copy(alpha = 0.3f)
     val currentHighlightColor = LuminarGold.copy(alpha = 0.65f)
+    val isDoc = renderingMode == RenderingMode.DOCUMENT
+    val isCode = renderingMode == RenderingMode.CODE
+    val docFont = if (isDoc) FontFamily.Serif else FontFamily.Default
 
     when (block) {
         is TextBlock.Heading -> {
@@ -195,12 +248,21 @@ private fun RenderBlock(
                 4 -> 17.sp * scale
                 else -> 16.sp * scale
             }
+            val headingColor = if (isDoc) {
+                when (theme) {
+                    AppTheme.DARK_AMOLED -> Color(0xFF6BA3D6)
+                    AppTheme.SEPIA -> Color(0xFF5B3A00)
+                    AppTheme.LIGHT -> Color(0xFF1F3864)
+                }
+            } else LuminarGold
+
             Text(
                 text = highlightText(block.text, searchQuery, highlightColor, currentHighlightColor, isCurrentMatch),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = if (block.level <= 2) 20.dp else 14.dp, bottom = 8.dp),
-                color = LuminarGold,
+                    .padding(top = if (block.level <= 2) 24.dp else 16.dp, bottom = if (isDoc) 12.dp else 8.dp),
+                color = headingColor,
+                fontFamily = if (isDoc) FontFamily.Serif else FontFamily.Default,
                 fontSize = fontSize,
                 fontWeight = FontWeight.Bold,
                 lineHeight = fontSize * 1.3f
@@ -218,10 +280,11 @@ private fun RenderBlock(
                 text = highlightAnnotatedString(block.spans, searchQuery, highlightColor, currentHighlightColor, isCurrentMatch),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 6.dp),
+                    .padding(vertical = if (isDoc) 8.dp else 6.dp),
                 color = textColor,
-                fontSize = 15.sp * scale,
-                lineHeight = 24.sp * scale
+                fontFamily = docFont,
+                fontSize = (if (isDoc) 16.sp else 15.sp) * scale,
+                lineHeight = (if (isDoc) 28.sp else 24.sp) * scale
             )
         }
 
@@ -231,23 +294,78 @@ private fun RenderBlock(
                 AppTheme.SEPIA -> Color(0xFFE2D5B5)
                 AppTheme.LIGHT -> Color(0xFFEEEEEE)
             }
-            val codeColor = when (theme) {
-                AppTheme.DARK_AMOLED -> Color(0xFF8BE9FD)
-                AppTheme.SEPIA -> Color(0xFF5E4300)
-                AppTheme.LIGHT -> Color(0xFF383838)
+
+            if (isCode) {
+                // IDE Mode: line numbers + syntax highlighting
+                val lines = block.code.lines()
+                val gutterWidth = (lines.size.toString().length * 10 + 16).dp
+                val gutterColor = textColor.copy(alpha = 0.25f)
+                val gutterBg = when (theme) {
+                    AppTheme.DARK_AMOLED -> Color(0xFF141414)
+                    AppTheme.SEPIA -> Color(0xFFD9CEB2)
+                    AppTheme.LIGHT -> Color(0xFFE2E2E2)
+                }
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp)
+                        .background(codeBg, shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                ) {
+                    lines.forEachIndexed { lineIdx, line ->
+                        Row(modifier = Modifier.fillMaxWidth()) {
+                            // Line number gutter
+                            Box(
+                                modifier = Modifier
+                                    .width(gutterWidth)
+                                    .background(gutterBg)
+                                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                                contentAlignment = Alignment.CenterEnd
+                            ) {
+                                Text(
+                                    text = "${lineIdx + 1}",
+                                    color = gutterColor,
+                                    fontSize = 11.sp * scale,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+
+                            // Code line with syntax coloring
+                            Text(
+                                text = syntaxHighlight(line, block.language, theme),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(horizontal = 10.dp, vertical = 2.dp),
+                                fontSize = 13.sp * scale,
+                                fontFamily = FontFamily.Monospace,
+                                lineHeight = 19.sp * scale,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+                    }
+                }
+            } else {
+                // Non-code mode: simple code block (markdown fenced etc.)
+                val codeColor = when (theme) {
+                    AppTheme.DARK_AMOLED -> Color(0xFF8BE9FD)
+                    AppTheme.SEPIA -> Color(0xFF5E4300)
+                    AppTheme.LIGHT -> Color(0xFF383838)
+                }
+                Text(
+                    text = highlightText(block.code, searchQuery, highlightColor, currentHighlightColor, isCurrentMatch),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 6.dp)
+                        .background(codeBg, shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                        .padding(12.dp),
+                    color = codeColor,
+                    fontSize = 13.sp * scale,
+                    fontFamily = FontFamily.Monospace,
+                    lineHeight = 20.sp * scale
+                )
             }
-            Text(
-                text = highlightText(block.code, searchQuery, highlightColor, currentHighlightColor, isCurrentMatch),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 6.dp)
-                    .background(codeBg, shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
-                    .padding(12.dp),
-                color = codeColor,
-                fontSize = 13.sp * scale,
-                fontFamily = FontFamily.Monospace,
-                lineHeight = 20.sp * scale
-            )
         }
 
         is TextBlock.BulletItem -> {
@@ -259,10 +377,31 @@ private fun RenderBlock(
                 },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 3.dp, horizontal = 4.dp),
+                    .padding(vertical = if (isDoc) 5.dp else 3.dp, horizontal = if (isDoc) 12.dp else 4.dp),
                 color = textColor,
-                fontSize = 15.sp * scale,
-                lineHeight = 23.sp * scale
+                fontFamily = docFont,
+                fontSize = (if (isDoc) 16.sp else 15.sp) * scale,
+                lineHeight = (if (isDoc) 26.sp else 23.sp) * scale
+            )
+        }
+
+        is TextBlock.TaskItem -> {
+            val checkbox = if (block.checked) "☑" else "☐"
+            val checkColor = if (block.checked) LuminarGold else textColor.copy(alpha = 0.4f)
+            Text(
+                text = buildAnnotatedString {
+                    withStyle(SpanStyle(color = checkColor, fontSize = 16.sp * scale)) {
+                        append("$checkbox  ")
+                    }
+                    append(highlightAnnotatedString(block.spans, searchQuery, highlightColor, currentHighlightColor, isCurrentMatch))
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp, horizontal = 4.dp),
+                color = if (block.checked) textColor.copy(alpha = 0.5f) else textColor,
+                fontFamily = docFont,
+                fontSize = (if (isDoc) 16.sp else 15.sp) * scale,
+                lineHeight = (if (isDoc) 26.sp else 23.sp) * scale
             )
         }
 
@@ -306,8 +445,25 @@ private fun RenderBlock(
         }
 
         is TextBlock.Table -> {
-            val borderColor = textColor.copy(alpha = 0.2f)
-            val headerBg = LuminarGold.copy(alpha = 0.1f)
+            val borderColor = textColor.copy(alpha = 0.15f)
+            val isSpreadsheet = renderingMode == RenderingMode.SPREADSHEET
+            val headerBg = if (isSpreadsheet) {
+                when (theme) {
+                    AppTheme.DARK_AMOLED -> Color(0xFF1E3A1E)
+                    AppTheme.SEPIA -> Color(0xFFE6D5A8)
+                    AppTheme.LIGHT -> Color(0xFFE2EFDA)
+                }
+            } else LuminarGold.copy(alpha = 0.1f)
+            val headerTextColor = if (isSpreadsheet) {
+                when (theme) {
+                    AppTheme.DARK_AMOLED -> Color(0xFF90D490)
+                    AppTheme.SEPIA -> Color(0xFF4A3B00)
+                    AppTheme.LIGHT -> Color(0xFF1F5C2E)
+                }
+            } else LuminarGold
+
+            // Horizontal scroll for wide tables
+            val scrollState = rememberScrollState()
 
             Column(
                 modifier = Modifier
@@ -316,65 +472,109 @@ private fun RenderBlock(
                     .border(1.dp, borderColor, androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
                     .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
             ) {
-                // Header row
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(headerBg)
-                        .height(IntrinsicSize.Min)
-                ) {
-                    block.headers.forEachIndexed { idx, header ->
-                        Text(
-                            text = header,
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(8.dp),
-                            color = LuminarGold,
-                            fontSize = 13.sp * scale,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 3
-                        )
-                        if (idx < block.headers.lastIndex) {
-                            Box(
-                                modifier = Modifier
-                                    .width(1.dp)
-                                    .height(IntrinsicSize.Max)
-                                    .background(borderColor)
-                            )
-                        }
-                    }
-                }
-                // Separator
-                HorizontalDivider(color = borderColor)
-                // Data rows
-                block.rows.forEachIndexed { rowIdx, row ->
+                // Horizontally scrollable content
+                val scrollMod = if (block.headers.size > 4)
+                    Modifier.horizontalScroll(scrollState) else Modifier
+
+                Column(modifier = scrollMod) {
+                    // Header row (sticky feel — thicker, bolder)
                     Row(
                         modifier = Modifier
-                            .fillMaxWidth()
+                            .let { if (block.headers.size > 4) it.width(IntrinsicSize.Max) else it.fillMaxWidth() }
+                            .background(headerBg)
                             .height(IntrinsicSize.Min)
                     ) {
-                        row.forEachIndexed { idx, cell ->
-                            Text(
-                                text = cell,
+                        // Row number column for spreadsheet mode
+                        if (isSpreadsheet) {
+                            Box(
                                 modifier = Modifier
-                                    .weight(1f)
-                                    .padding(8.dp),
-                                color = textColor,
-                                fontSize = 12.sp * scale,
-                                maxLines = 5
-                            )
-                            if (idx < row.lastIndex) {
-                                Box(
-                                    modifier = Modifier
-                                        .width(1.dp)
-                                        .height(IntrinsicSize.Max)
-                                        .background(borderColor)
+                                    .width(36.dp)
+                                    .padding(6.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "#",
+                                    color = headerTextColor.copy(alpha = 0.5f),
+                                    fontSize = 11.sp * scale,
+                                    fontWeight = FontWeight.Bold
                                 )
+                            }
+                            Box(modifier = Modifier.width(1.dp).background(borderColor))
+                        }
+
+                        block.headers.forEachIndexed { idx, header ->
+                            Text(
+                                text = header,
+                                modifier = Modifier
+                                    .let { if (block.headers.size > 4) it.width(120.dp) else it.weight(1f) }
+                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                                color = headerTextColor,
+                                fontSize = 13.sp * scale,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 3
+                            )
+                            if (idx < block.headers.lastIndex) {
+                                Box(modifier = Modifier.width(1.dp).background(borderColor))
                             }
                         }
                     }
-                    if (rowIdx < block.rows.lastIndex) {
-                        HorizontalDivider(color = borderColor.copy(alpha = 0.1f))
+
+                    // Thick header separator
+                    HorizontalDivider(
+                        thickness = if (isSpreadsheet) 2.dp else 1.dp,
+                        color = if (isSpreadsheet) headerTextColor.copy(alpha = 0.3f) else borderColor
+                    )
+
+                    // Data rows with zebra striping
+                    block.rows.forEachIndexed { rowIdx, row ->
+                        val zebraBg = if (isSpreadsheet && rowIdx % 2 == 1) {
+                            textColor.copy(alpha = 0.04f)
+                        } else Color.Transparent
+
+                        Row(
+                            modifier = Modifier
+                                .let { if (block.headers.size > 4) it.width(IntrinsicSize.Max) else it.fillMaxWidth() }
+                                .background(zebraBg)
+                                .height(IntrinsicSize.Min)
+                        ) {
+                            // Row number
+                            if (isSpreadsheet) {
+                                Box(
+                                    modifier = Modifier
+                                        .width(36.dp)
+                                        .padding(6.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "${rowIdx + 1}",
+                                        color = textColor.copy(alpha = 0.35f),
+                                        fontSize = 10.sp * scale
+                                    )
+                                }
+                                Box(modifier = Modifier.width(1.dp).background(borderColor))
+                            }
+
+                            row.forEachIndexed { idx, cell ->
+                                val isNumeric = cell.toDoubleOrNull() != null
+                                Text(
+                                    text = cell,
+                                    modifier = Modifier
+                                        .let { if (block.headers.size > 4) it.width(120.dp) else it.weight(1f) }
+                                        .padding(horizontal = 10.dp, vertical = 7.dp),
+                                    color = textColor,
+                                    fontSize = 12.sp * scale,
+                                    textAlign = if (isNumeric) androidx.compose.ui.text.style.TextAlign.End else androidx.compose.ui.text.style.TextAlign.Start,
+                                    fontFamily = if (isNumeric) FontFamily.Monospace else FontFamily.Default,
+                                    maxLines = 5
+                                )
+                                if (idx < row.lastIndex) {
+                                    Box(modifier = Modifier.width(1.dp).background(borderColor))
+                                }
+                            }
+                        }
+                        if (rowIdx < block.rows.lastIndex) {
+                            HorizontalDivider(color = borderColor.copy(alpha = 0.08f))
+                        }
                     }
                 }
             }
@@ -460,6 +660,233 @@ private fun highlightAnnotatedString(
     }
 }
 
+// ─── Document Paper Card (Word-like) ─────────────────────
+
+@Composable
+private fun DocumentPaperCard(
+    theme: AppTheme,
+    content: @Composable () -> Unit
+) {
+    val paperColor = when (theme) {
+        AppTheme.DARK_AMOLED -> Color(0xFF252525)
+        AppTheme.SEPIA -> Color(0xFFFAF4E8)
+        AppTheme.LIGHT -> Color.White
+    }
+    val shadowElevation = if (theme == AppTheme.DARK_AMOLED) 2.dp else 4.dp
+
+    androidx.compose.material3.Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        color = paperColor,
+        shadowElevation = shadowElevation,
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 4.dp)
+        ) {
+            content()
+        }
+    }
+}
+
+// ─── Code File Header (VS Code-like) ────────────────────
+
+@Composable
+private fun CodeFileHeader(
+    lineCount: Int,
+    charCount: Int,
+    textColor: Color
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 8.dp)
+            .background(
+                textColor.copy(alpha = 0.06f),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+            )
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = "$lineCount lines",
+            color = textColor.copy(alpha = 0.5f),
+            fontSize = 12.sp,
+            fontFamily = FontFamily.Monospace
+        )
+        Text(
+            text = "${charCount} chars",
+            color = textColor.copy(alpha = 0.5f),
+            fontSize = 12.sp,
+            fontFamily = FontFamily.Monospace
+        )
+    }
+}
+
+// ─── Syntax highlighting (VS Code-like) ──────────────────
+
+private val KEYWORDS = setOf(
+    // Common across most languages
+    "fun", "val", "var", "class", "object", "interface", "enum", "data",
+    "if", "else", "when", "for", "while", "do", "return", "break", "continue",
+    "import", "package", "public", "private", "protected", "internal",
+    "abstract", "override", "open", "final", "sealed", "companion",
+    "suspend", "async", "await", "try", "catch", "finally", "throw",
+    "null", "true", "false", "this", "super", "is", "as", "in", "out",
+    // Python
+    "def", "self", "None", "True", "False", "lambda", "yield", "from", "with",
+    "pass", "raise", "except", "assert", "global", "nonlocal", "del",
+    // JS/TS
+    "function", "const", "let", "export", "default", "new", "typeof",
+    "instanceof", "void", "delete", "switch", "case",
+    // Java/C
+    "static", "void", "int", "float", "double", "long", "boolean", "char",
+    "String", "extends", "implements", "throws", "synchronized",
+    // Rust
+    "fn", "mut", "pub", "use", "mod", "struct", "impl", "trait", "where",
+    "match", "loop", "ref", "move", "unsafe", "extern", "crate",
+    // Go
+    "func", "type", "map", "range", "defer", "go", "chan", "select",
+    // General
+    "print", "println", "printf", "console", "log", "require", "include"
+)
+
+private fun syntaxHighlight(line: String, language: String?, theme: AppTheme): AnnotatedString {
+    val keywordColor = when (theme) {
+        AppTheme.DARK_AMOLED -> Color(0xFFFF79C6)  // pink
+        AppTheme.SEPIA -> Color(0xFF8B0000)
+        AppTheme.LIGHT -> Color(0xFF0000FF)
+    }
+    val stringColor = when (theme) {
+        AppTheme.DARK_AMOLED -> Color(0xFFF1FA8C)  // yellow
+        AppTheme.SEPIA -> Color(0xFF006400)
+        AppTheme.LIGHT -> Color(0xFF008000)
+    }
+    val commentColor = when (theme) {
+        AppTheme.DARK_AMOLED -> Color(0xFF6272A4)  // muted blue
+        AppTheme.SEPIA -> Color(0xFF808080)
+        AppTheme.LIGHT -> Color(0xFF808080)
+    }
+    val numberColor = when (theme) {
+        AppTheme.DARK_AMOLED -> Color(0xFFBD93F9)  // purple
+        AppTheme.SEPIA -> Color(0xFF800080)
+        AppTheme.LIGHT -> Color(0xFF800080)
+    }
+    val defaultColor = when (theme) {
+        AppTheme.DARK_AMOLED -> Color(0xFFF8F8F2)
+        AppTheme.SEPIA -> Color(0xFF5E4300)
+        AppTheme.LIGHT -> Color(0xFF383838)
+    }
+
+    return buildAnnotatedString {
+        val trimmedLine = line
+
+        // Check for full-line comment
+        val commentStart = findCommentStart(trimmedLine)
+        if (commentStart == 0) {
+            withStyle(SpanStyle(color = commentColor, fontStyle = FontStyle.Italic)) {
+                append(trimmedLine)
+            }
+            return@buildAnnotatedString
+        }
+
+        var i = 0
+        while (i < trimmedLine.length) {
+            // Comment from here to end of line
+            if (commentStart > 0 && i == commentStart) {
+                withStyle(SpanStyle(color = commentColor, fontStyle = FontStyle.Italic)) {
+                    append(trimmedLine.substring(i))
+                }
+                break
+            }
+
+            val ch = trimmedLine[i]
+
+            // String literals
+            if (ch == '"' || ch == '\'' || ch == '`') {
+                val endIdx = trimmedLine.indexOf(ch, i + 1)
+                val strEnd = if (endIdx >= 0) endIdx + 1 else trimmedLine.length
+                withStyle(SpanStyle(color = stringColor)) {
+                    append(trimmedLine.substring(i, strEnd))
+                }
+                i = strEnd
+                continue
+            }
+
+            // Numbers
+            if (ch.isDigit() && (i == 0 || !trimmedLine[i - 1].isLetterOrDigit())) {
+                var numEnd = i
+                while (numEnd < trimmedLine.length && (trimmedLine[numEnd].isDigit() || trimmedLine[numEnd] == '.' || trimmedLine[numEnd] == 'f' || trimmedLine[numEnd] == 'L' || trimmedLine[numEnd] == 'x')) numEnd++
+                withStyle(SpanStyle(color = numberColor)) {
+                    append(trimmedLine.substring(i, numEnd))
+                }
+                i = numEnd
+                continue
+            }
+
+            // Words (potential keywords)
+            if (ch.isLetter() || ch == '_') {
+                var wordEnd = i
+                while (wordEnd < trimmedLine.length && (trimmedLine[wordEnd].isLetterOrDigit() || trimmedLine[wordEnd] == '_')) wordEnd++
+                val word = trimmedLine.substring(i, wordEnd)
+                if (word in KEYWORDS) {
+                    withStyle(SpanStyle(color = keywordColor, fontWeight = FontWeight.SemiBold)) {
+                        append(word)
+                    }
+                } else {
+                    withStyle(SpanStyle(color = defaultColor)) {
+                        append(word)
+                    }
+                }
+                i = wordEnd
+                continue
+            }
+
+            // Everything else
+            withStyle(SpanStyle(color = defaultColor)) {
+                append(ch)
+            }
+            i++
+        }
+    }
+}
+
+private fun findCommentStart(line: String): Int {
+    val stripped = line.trimStart()
+    val offset = line.length - stripped.length
+
+    // Single-line comments
+    if (stripped.startsWith("//")) return offset
+    if (stripped.startsWith("#") && !stripped.startsWith("#!")) return offset
+    if (stripped.startsWith("--")) return offset
+    if (stripped.startsWith(";")) return offset
+
+    // Inline comment (find // not inside a string)
+    var inString = false
+    var stringChar = ' '
+    for (idx in line.indices) {
+        val ch = line[idx]
+        if (inString) {
+            if (ch == stringChar) inString = false
+        } else {
+            if (ch == '"' || ch == '\'') {
+                inString = true
+                stringChar = ch
+            } else if (ch == '/' && idx + 1 < line.length && line[idx + 1] == '/') {
+                return idx
+            } else if (ch == '#' && idx + 1 < line.length && line[idx + 1] != '!') {
+                // Python-style inline comment
+                return idx
+            }
+        }
+    }
+    return -1
+}
+
 // ─── Cached regex patterns ───────────────────────────────
 
 private val HR_REGEX = Regex("^[-*_]{3,}$")
@@ -511,7 +938,16 @@ private fun parseMarkdownBlocks(source: String): List<TextBlock> {
             trimmed.matches(UL_REGEX) -> {
                 val indent = line.indexOf(trimmed[0]) / 2
                 val text = trimmed.drop(2).trimStart()
-                blocks.add(TextBlock.BulletItem(parseInlineMarkdown(text), indent))
+                // Check for task list: - [ ] or - [x] or - [X]
+                if (text.startsWith("[ ] ") || text.startsWith("[] ")) {
+                    val taskText = text.removePrefix("[ ] ").removePrefix("[] ")
+                    blocks.add(TextBlock.TaskItem(parseInlineMarkdown(taskText), checked = false))
+                } else if (text.startsWith("[x] ") || text.startsWith("[X] ")) {
+                    val taskText = text.removePrefix("[x] ").removePrefix("[X] ")
+                    blocks.add(TextBlock.TaskItem(parseInlineMarkdown(taskText), checked = true))
+                } else {
+                    blocks.add(TextBlock.BulletItem(parseInlineMarkdown(text), indent))
+                }
                 i++
             }
             trimmed.matches(OL_REGEX) -> {
@@ -611,7 +1047,13 @@ private fun parseInlineMarkdown(text: String): AnnotatedString {
 
 private fun parseTextBlocks(source: String, format: BookFormat): List<TextBlock> {
     val isCode = format == BookFormat.CODE || format == BookFormat.JSON ||
-        format == BookFormat.XML || format == BookFormat.CSV
+        format == BookFormat.XML
+
+    // CSV/TSV → parse as table
+    if (format == BookFormat.CSV) {
+        return parseCsvToTable(source)
+    }
+
     return if (isCode) {
         listOf(TextBlock.CodeBlock(source, formatToLanguageHint(format)))
     } else {
@@ -626,6 +1068,26 @@ private fun parseTextBlocks(source: String, format: BookFormat): List<TextBlock>
         if (blocks.isEmpty()) blocks.add(TextBlock.Paragraph(AnnotatedString("(empty file)")))
         blocks
     }
+}
+
+private fun parseCsvToTable(source: String): List<TextBlock> {
+    val lines = source.lines().filter { it.isNotBlank() }
+    if (lines.isEmpty()) return listOf(TextBlock.Paragraph(AnnotatedString("(Empty file)")))
+
+    val delimiter = if (lines.first().count { it == '\t' } > lines.first().count { it == ',' }) '\t' else ','
+    val parsed = lines.map { line ->
+        line.split(delimiter).map { it.trim().trimStart('"').trimEnd('"') }
+    }
+
+    val headers = parsed.first()
+    val rows = if (parsed.size > 1) parsed.subList(1, parsed.size) else emptyList()
+
+    // Normalize column count
+    val maxCols = (listOf(headers) + rows).maxOf { it.size }
+    val normHeaders = headers + List(maxCols - headers.size) { "" }
+    val normRows = rows.map { row -> row + List(maxCols - row.size) { "" } }
+
+    return listOf(TextBlock.Table(normHeaders, normRows))
 }
 
 private fun formatToLanguageHint(format: BookFormat): String? = when (format) {
