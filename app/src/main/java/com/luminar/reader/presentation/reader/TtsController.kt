@@ -58,6 +58,7 @@ class TtsController @Inject constructor(
     val state = _state.asStateFlow()
 
     init {
+        try {
         tts = TextToSpeech(context) { status ->
             _state.update { it.copy(isAvailable = status == TextToSpeech.SUCCESS) }
             if (status == TextToSpeech.SUCCESS) {
@@ -87,6 +88,10 @@ class TtsController @Inject constructor(
                     }
                 })
             }
+        }
+        } catch (_: Exception) {
+            // TTS engine not available on this device — fail silently
+            _state.update { it.copy(isAvailable = false) }
         }
     }
 

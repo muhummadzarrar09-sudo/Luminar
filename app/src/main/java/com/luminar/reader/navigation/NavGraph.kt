@@ -7,6 +7,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -28,9 +29,12 @@ fun LuminarNavGraph(
     onOnboardingComplete: () -> Unit,
     navController: NavHostController = rememberNavController()
 ) {
+    // Lock startDestination on first composition — prevents crash if DataStore updates later
+    val startRoute = remember { if (hasSeenOnboarding) Screen.Library.route else Screen.Onboarding.route }
+
     NavHost(
         navController = navController,
-        startDestination = if (hasSeenOnboarding) Screen.Library.route else Screen.Onboarding.route
+        startDestination = startRoute
     ) {
         // ─── Onboarding ──────────────────────────────────
         composable(
