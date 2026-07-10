@@ -29,7 +29,7 @@ object DatabaseModule {
             AppDatabase::class.java,
             "luminar_reader.db"
         )
-            .fallbackToDestructiveMigration(dropAllTables = true)
+            .fallbackToDestructiveMigration()
             .build()
     }
 

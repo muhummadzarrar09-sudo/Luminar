@@ -5,4 +5,9 @@ import android.app.Application
 import dagger.hilt.android.HiltAndroidApp
 
 @HiltAndroidApp
-class LuminarApp : Application()
+class LuminarApp : Application() {
+    override fun onCreate() {
+        super.onCreate()
+        CrashLogger(this).install()
+    }
+}

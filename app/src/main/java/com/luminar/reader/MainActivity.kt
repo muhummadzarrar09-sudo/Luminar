@@ -50,7 +50,7 @@ class MainActivity : ComponentActivity() {
 
             LuminarReaderTheme(selectedTheme = preferences.selectedTheme) {
                 LuminarNavGraph(
-                    hasSeenOnboarding = preferences.hasSeenOnboarding,
+                    hasSeenOnboarding = true,
                     onOnboardingComplete = {
                         lifecycleScope.launch {
                             userPreferencesRepository.setOnboardingComplete()

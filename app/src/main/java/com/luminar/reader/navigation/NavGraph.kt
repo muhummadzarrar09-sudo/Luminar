@@ -29,12 +29,10 @@ fun LuminarNavGraph(
     onOnboardingComplete: () -> Unit,
     navController: NavHostController = rememberNavController()
 ) {
-    // Lock startDestination on first composition — prevents crash if DataStore updates later
-    val startRoute = remember { if (hasSeenOnboarding) Screen.Library.route else Screen.Onboarding.route }
-
+    // Always start at Library — onboarding deferred to post-crash-fix
     NavHost(
         navController = navController,
-        startDestination = startRoute
+        startDestination = Screen.Library.route
     ) {
         // ─── Onboarding ──────────────────────────────────
         composable(

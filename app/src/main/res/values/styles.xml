@@ -1,4 +1,4 @@
-<!-- app/src/main/res/values/styles.xml -->
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.Luminar" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">serif</item>
