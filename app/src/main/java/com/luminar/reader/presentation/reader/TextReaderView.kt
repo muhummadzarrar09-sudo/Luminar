@@ -69,19 +69,9 @@ fun TextReaderView(
     onScrollToBlockConsumed: () -> Unit,
     initialScrollPosition: Int
 ) {
-    // Document mode uses paper-white regardless of theme
     val isDocumentMode = renderingMode == RenderingMode.DOCUMENT
     val isCodeMode = renderingMode == RenderingMode.CODE
-
-    val backgroundColor = if (isDocumentMode) {
-        when (theme) {
-            AppTheme.DARK_AMOLED -> Color(0xFF1A1A1A)  // dark gray, not pure black
-            AppTheme.SEPIA -> Color(0xFFF0E6CE)
-            AppTheme.LIGHT -> Color(0xFFF0F0F0)  // light gray, paper sits on top
-        }
-    } else {
-        theme.readerBackgroundColor()
-    }
+    val backgroundColor = theme.readerBackgroundColor()
     val textColor = theme.readerControlsContentColor()
     val listState = rememberLazyListState()
 
@@ -174,31 +164,15 @@ fun TextReaderView(
                     val isThisTheCurrentMatch = isSearchActive &&
                         currentMatchBlockIndex == index
 
-                    if (isDocumentMode) {
-                        // Paper card wrapper for document mode
-                        DocumentPaperCard(theme = theme) {
-                            RenderBlock(
-                                block = block,
-                                textColor = if (theme == AppTheme.DARK_AMOLED) Color(0xFFE0E0E0)
-                                           else Color(0xFF1A1A1A),
-                                theme = theme,
-                                fontScale = fontScale,
-                                renderingMode = renderingMode,
-                                searchQuery = if (isSearchActive) searchQuery else "",
-                                isCurrentMatch = isThisTheCurrentMatch
-                            )
-                        }
-                    } else {
-                        RenderBlock(
-                            block = block,
-                            textColor = textColor,
-                            theme = theme,
-                            fontScale = fontScale,
-                            renderingMode = renderingMode,
-                            searchQuery = if (isSearchActive) searchQuery else "",
-                            isCurrentMatch = isThisTheCurrentMatch
-                        )
-                    }
+                    RenderBlock(
+                        block = block,
+                        textColor = textColor,
+                        theme = theme,
+                        fontScale = fontScale,
+                        renderingMode = renderingMode,
+                        searchQuery = if (isSearchActive) searchQuery else "",
+                        isCurrentMatch = isThisTheCurrentMatch
+                    )
                 }
             }
         }
@@ -248,20 +222,12 @@ private fun RenderBlock(
                 4 -> 17.sp * scale
                 else -> 16.sp * scale
             }
-            val headingColor = if (isDoc) {
-                when (theme) {
-                    AppTheme.DARK_AMOLED -> Color(0xFF6BA3D6)
-                    AppTheme.SEPIA -> Color(0xFF5B3A00)
-                    AppTheme.LIGHT -> Color(0xFF1F3864)
-                }
-            } else LuminarGold
-
             Text(
                 text = highlightText(block.text, searchQuery, highlightColor, currentHighlightColor, isCurrentMatch),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = if (block.level <= 2) 24.dp else 16.dp, bottom = if (isDoc) 12.dp else 8.dp),
-                color = headingColor,
+                    .padding(top = if (block.level <= 2) 20.dp else 14.dp, bottom = 8.dp),
+                color = LuminarGold,
                 fontFamily = if (isDoc) FontFamily.Serif else FontFamily.Default,
                 fontSize = fontSize,
                 fontWeight = FontWeight.Bold,

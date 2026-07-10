@@ -126,6 +126,37 @@ fun LibraryScreen(
     )
 
     var bookPendingDeletion by remember { mutableStateOf<Book?>(null) }
+    var showStatsDialog by remember { mutableStateOf(false) }
+
+    // Stats dialog
+    if (showStatsDialog) {
+        AlertDialog(
+            onDismissRequest = { showStatsDialog = false },
+            title = { Text("Reading Stats", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("📚 ${uiState.allBooks.size} books in library",
+                        style = MaterialTheme.typography.bodyLarge)
+
+                    val formats = uiState.allBooks.groupBy { it.format.displayName }
+                        .entries.sortedByDescending { it.value.size }
+                    if (formats.isNotEmpty()) {
+                        Text("By format:", style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        formats.forEach { (name, books) ->
+                            Text("  $name: ${books.size}",
+                                style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showStatsDialog = false }) {
+                    Text("Done", color = LuminarGold)
+                }
+            }
+        )
+    }
 
     LaunchedEffect(Unit) {
         viewModel.effects.collect { effect ->
@@ -209,7 +240,8 @@ fun LibraryScreen(
                 onImport = {
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                     filePickerLauncher.launch(BookFormat.IMPORTABLE_MIME_TYPES)
-                }
+                },
+                onShowStats = { showStatsDialog = true }
             )
         },
     ) { innerPadding ->
@@ -340,7 +372,11 @@ private fun ContinueReadingCard(
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        border = androidx.compose.foundation.BorderStroke(
+            0.8.dp,
+            LuminarGold.copy(alpha = 0.2f)
+        )
     ) {
         Row(
             modifier = Modifier
@@ -509,17 +545,18 @@ private fun LibraryBottomBar(
     onToggleSearch: () -> Unit,
     onToggleViewMode: () -> Unit,
     onOpenSettings: () -> Unit,
-    onImport: () -> Unit
+    onImport: () -> Unit,
+    onShowStats: () -> Unit
 ) {
     Column {
-        // Top divider
+        // Subtle glass-effect divider
         HorizontalDivider(
-            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+            color = LuminarGold.copy(alpha = 0.08f),
             thickness = 0.5.dp
         )
         Surface(
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 3.dp
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+            tonalElevation = 2.dp
         ) {
         Row(
             modifier = Modifier
@@ -585,7 +622,7 @@ private fun LibraryBottomBar(
                 onClick = onImport
             )
 
-            // View toggle (placeholder for future stats)
+            // Stats
             BottomBarItem(
                 icon = {
                     Icon(
@@ -595,7 +632,7 @@ private fun LibraryBottomBar(
                     )
                 },
                 label = "Stats",
-                onClick = onOpenSettings // for now, opens settings where stats live
+                onClick = onShowStats
             )
 
             // Settings
@@ -809,8 +846,8 @@ private fun LibraryGrid(
             key = { it.id }
         ) { book ->
             BookCard(
-                modifier = Modifier.animateItemPlacement(
-                    animationSpec = spring(
+                modifier = Modifier.animateItem(
+                    fadeInSpec = spring(
                         dampingRatio = Spring.DampingRatioLowBouncy,
                         stiffness = Spring.StiffnessMediumLow
                     )
@@ -980,7 +1017,14 @@ private fun BookCard(
             },
         shape = RoundedCornerShape(Radius.md),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        elevation = CardDefaults.cardElevation(
+            defaultElevation = 1.dp,
+            pressedElevation = 4.dp
+        ),
+        border = androidx.compose.foundation.BorderStroke(
+            0.5.dp,
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.15f)
+        )
     ) {
         Column {
             Box(

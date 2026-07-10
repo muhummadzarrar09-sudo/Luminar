@@ -33,7 +33,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        WindowCompat.setDecorFitsSystemWindows(window, false)
+        // Let the system handle status bar padding for Library/Settings
+        // Reader handles immersive mode separately
+        WindowCompat.setDecorFitsSystemWindows(window, true)
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {

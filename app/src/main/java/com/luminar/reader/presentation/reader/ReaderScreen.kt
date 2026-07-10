@@ -89,6 +89,7 @@ import com.luminar.reader.data.model.Bookmark
 import com.luminar.reader.data.model.RenderingMode
 import com.luminar.reader.presentation.components.ErrorReportDialog
 import com.luminar.reader.presentation.theme.LuminarGold
+import com.luminar.reader.presentation.theme.glassEffect
 import com.luminar.reader.presentation.theme.next
 import com.luminar.reader.presentation.theme.readerBackgroundColor
 import com.luminar.reader.presentation.theme.readerControlsContainerColor
@@ -522,15 +523,21 @@ private fun ReaderTopControls(
     val contentColor = uiState.currentTheme.readerControlsContentColor()
 
     Surface(
-        modifier = modifier.fillMaxWidth(),
-        color = containerColor,
+        modifier = modifier
+            .fillMaxWidth()
+            .glassEffect(
+                tintColor = containerColor,
+                borderColor = LuminarGold.copy(alpha = 0.1f),
+                cornerRadius = 0.dp
+            ),
+        color = Color.Transparent,
         contentColor = contentColor
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
-                .padding(horizontal = 6.dp, vertical = 8.dp),
+                .padding(horizontal = 8.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(
@@ -978,8 +985,13 @@ private fun SearchBar(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .statusBarsPadding(),
-        color = containerColor,
+            .statusBarsPadding()
+            .glassEffect(
+                tintColor = containerColor,
+                borderColor = LuminarGold.copy(alpha = 0.08f),
+                cornerRadius = 0.dp
+            ),
+        color = Color.Transparent,
         contentColor = contentColor
     ) {
         Row(
@@ -1132,11 +1144,16 @@ private fun TtsControlBar(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 8.dp)
-            .padding(bottom = 80.dp),
-        color = containerColor,
+            .padding(bottom = 80.dp)
+            .glassEffect(
+                tintColor = containerColor,
+                borderColor = LuminarGold.copy(alpha = 0.12f),
+                cornerRadius = 16.dp
+            ),
+        color = Color.Transparent,
         contentColor = contentColor,
         shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
-        shadowElevation = 8.dp
+        shadowElevation = 4.dp
     ) {
         Column(
             modifier = Modifier

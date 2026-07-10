@@ -326,7 +326,12 @@ private fun PreferenceGroup(
             .fillMaxWidth()
             .padding(horizontal = 16.dp),
         color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(16.dp)
+        shape = RoundedCornerShape(16.dp),
+        border = androidx.compose.foundation.BorderStroke(
+            0.5.dp,
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f)
+        ),
+        tonalElevation = 1.dp
     ) {
         Column(content = content)
     }
