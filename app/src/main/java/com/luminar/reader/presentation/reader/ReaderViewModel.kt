@@ -62,7 +62,8 @@ data class ReaderUiState(
     val lastErrorThrowable: Throwable? = null,
     val showErrorReport: Boolean = false,
     val bookmarks: List<Bookmark> = emptyList(),
-    val isCurrentPageBookmarked: Boolean = false
+    val isCurrentPageBookmarked: Boolean = false,
+    val isHtmlPreviewMode: Boolean = true
 ) {
     val totalChapters: Int
         get() = chapterTitles.size
@@ -102,6 +103,9 @@ data class ReaderUiState(
 
     val isDocument: Boolean
         get() = book?.format?.isDocumentFormat == true
+
+    val isHtml: Boolean
+        get() = book?.format == BookFormat.HTML
 
     val isComicBook: Boolean
         get() = book?.format?.isComicBook == true
@@ -150,6 +154,9 @@ sealed interface ReaderEvent {
     data object ToggleBookmark : ReaderEvent
     data class GoToBookmark(val bookmark: Bookmark) : ReaderEvent
     data class DeleteBookmark(val bookmark: Bookmark) : ReaderEvent
+    // Chapter navigation
+    data class GoToChapter(val chapterIndex: Int) : ReaderEvent
+    data object ToggleHtmlViewMode : ReaderEvent
 }
 
 @OptIn(FlowPreview::class)
@@ -213,6 +220,8 @@ class ReaderViewModel @Inject constructor(
             ReaderEvent.ToggleBookmark -> toggleBookmark()
             is ReaderEvent.GoToBookmark -> goToPage(event.bookmark.page)
             is ReaderEvent.DeleteBookmark -> deleteBookmark(event.bookmark)
+            is ReaderEvent.GoToChapter -> goToChapter(event.chapterIndex)
+            ReaderEvent.ToggleHtmlViewMode -> toggleHtmlViewMode()
             ReaderEvent.OpenSearch -> openSearch()
             ReaderEvent.CloseSearch -> closeSearch()
             is ReaderEvent.UpdateSearchQuery -> updateSearchQuery(event.query)
@@ -261,17 +270,50 @@ class ReaderViewModel @Inject constructor(
         }
     }
 
+    // Cache start-block index for each chapter
+    private var chapterBlockIndices: List<Int> = emptyList()
+
     /**
      * Called by TextReaderView after it has parsed its blocks,
      * so the VM can search through them.
      */
     fun onBlocksParsed(blockTexts: List<String>) {
         parsedBlockTexts = blockTexts
+        
+        // Map each chapter title to its starting text block index
+        val titles = _uiState.value.chapterTitles
+        chapterBlockIndices = titles.map { title ->
+            val index = blockTexts.indexOfFirst { text ->
+                text.trim().equals(title.trim(), ignoreCase = true)
+            }
+            index.coerceAtLeast(0)
+        }
+
         // Re-run search if there's an active query
         val query = _uiState.value.searchQuery
         if (query.isNotEmpty()) {
             performSearch(query)
         }
+    }
+
+    private fun goToChapter(chapterIndex: Int) {
+        val titles = _uiState.value.chapterTitles
+        val targetTitle = titles.getOrNull(chapterIndex) ?: return
+        
+        val blockIdx = parsedBlockTexts.indexOfFirst { text ->
+            text.trim().equals(targetTitle.trim(), ignoreCase = true)
+        }
+        
+        if (blockIdx >= 0) {
+            _uiState.update { state ->
+                state.copy(
+                    currentChapterIndex = chapterIndex,
+                    currentPage = chapterIndex,
+                    scrollToBlockIndex = blockIdx
+                )
+            }
+        }
+        onControlsInteraction()
     }
 
     private fun toggleTts() {
@@ -548,7 +590,13 @@ class ReaderViewModel @Inject constructor(
     private fun loadTextContent(book: Book) {
         viewModelScope.launch {
             try {
-                val content = bookRepository.readTextContent(book)
+                val content = if (book.format == BookFormat.CSV) {
+                    bookRepository.readTextContent(book)
+                } else if (book.format == BookFormat.HTML && _uiState.value.isHtmlPreviewMode) {
+                    bookRepository.readDocumentContent(book)
+                } else {
+                    bookRepository.readTextContent(book)
+                }
                 val words = content.split(Regex("\\s+")).count { it.isNotBlank() }
                 val chars = content.length
                 _uiState.update {
@@ -564,6 +612,14 @@ class ReaderViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    private fun toggleHtmlViewMode() {
+        val book = _uiState.value.book ?: return
+        val newMode = !_uiState.value.isHtmlPreviewMode
+        _uiState.update { it.copy(isHtmlPreviewMode = newMode, textContent = null) }
+        loadTextContent(book)
+        onControlsInteraction()
     }
 
     private fun observeInitialProgress() {
@@ -640,7 +696,24 @@ class ReaderViewModel @Inject constructor(
     }
 
     private fun onScrollPositionChanged(position: Int) {
-        _uiState.update { it.copy(scrollPosition = position) }
+        _uiState.update { state ->
+            var activeChapterIdx = state.currentChapterIndex
+            if (chapterBlockIndices.isNotEmpty()) {
+                activeChapterIdx = 0
+                for (i in chapterBlockIndices.indices.reversed()) {
+                    if (position >= chapterBlockIndices[i]) {
+                        activeChapterIdx = i
+                        break
+                    }
+                }
+            }
+            
+            state.copy(
+                scrollPosition = position,
+                currentChapterIndex = activeChapterIdx,
+                currentPage = activeChapterIdx
+            )
+        }
         pageChanges.tryEmit(position)
     }
 

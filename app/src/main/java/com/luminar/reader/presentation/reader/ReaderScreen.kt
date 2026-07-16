@@ -235,12 +235,17 @@ fun ReaderScreen(
                         val renderFormat = when {
                             uiState.isEpub -> BookFormat.MARKDOWN
                             uiState.isDocument -> BookFormat.MARKDOWN
+                            uiState.isHtml -> if (uiState.isHtmlPreviewMode) BookFormat.MARKDOWN else BookFormat.XML
                             else -> book.format
+                        }
+                        val renderingMode = when {
+                            uiState.isHtml -> if (uiState.isHtmlPreviewMode) RenderingMode.MARKDOWN else RenderingMode.CODE
+                            else -> book.format.renderingMode
                         }
                         TextReaderView(
                             content = textContent,
                             format = renderFormat,
-                            renderingMode = book.format.renderingMode,
+                            renderingMode = renderingMode,
                             theme = uiState.currentTheme,
                             fontScale = uiState.fontScale,
                             searchQuery = uiState.searchQuery,
@@ -315,6 +320,12 @@ fun ReaderScreen(
                     },
                     onGoToBookmark = { bookmark ->
                         viewModel.onEvent(ReaderEvent.GoToBookmark(bookmark))
+                    },
+                    onToggleHtmlViewMode = {
+                        viewModel.onEvent(ReaderEvent.ToggleHtmlViewMode)
+                    },
+                    onGoToChapter = { chapterIndex ->
+                        viewModel.onEvent(ReaderEvent.GoToChapter(chapterIndex))
                     },
                     onInteraction = viewModel::onControlsInteraction
                 )
@@ -405,6 +416,8 @@ private fun PdfReaderView(
                     .enableSwipe(true)
                     .swipeHorizontal(true)
                     .enableDoubletap(true)
+                    .enableAntialiasing(true)
+                    .pageFitPolicy(com.github.barteksc.pdfviewer.util.FitPolicy.WIDTH)
                     .onPageChange { page, _ ->
                         onPageChanged(page)
                     }
@@ -450,6 +463,8 @@ private fun ReaderControlsOverlay(
     onToggleTts: () -> Unit,
     onToggleBookmark: () -> Unit,
     onGoToBookmark: (Bookmark) -> Unit,
+    onToggleHtmlViewMode: () -> Unit,
+    onGoToChapter: (Int) -> Unit,
     onInteraction: () -> Unit
 ) {
     AnimatedVisibility(
@@ -492,6 +507,8 @@ private fun ReaderControlsOverlay(
                 onToggleTts = onToggleTts,
                 onToggleBookmark = onToggleBookmark,
                 onGoToBookmark = onGoToBookmark,
+                onToggleHtmlViewMode = onToggleHtmlViewMode,
+                onGoToChapter = onGoToChapter,
                 onInteraction = onInteraction
             )
 
@@ -517,6 +534,8 @@ private fun ReaderTopControls(
     onToggleTts: () -> Unit,
     onToggleBookmark: () -> Unit,
     onGoToBookmark: (Bookmark) -> Unit,
+    onToggleHtmlViewMode: () -> Unit,
+    onGoToChapter: (Int) -> Unit,
     onInteraction: () -> Unit
 ) {
     val containerColor = uiState.currentTheme.readerControlsContainerColor()
@@ -571,6 +590,26 @@ private fun ReaderTopControls(
                 }
             }
 
+            // HTML View Mode switcher toggle button (HTML files only)
+            if (uiState.isHtml) {
+                IconButton(
+                    onClick = {
+                        onInteraction()
+                        onToggleHtmlViewMode()
+                    }
+                ) {
+                    Icon(
+                        painter = painterResource(
+                            if (uiState.isHtmlPreviewMode) R.drawable.ic_view_list_24
+                            else R.drawable.ic_auto_stories_48
+                        ),
+                        contentDescription = if (uiState.isHtmlPreviewMode) "Source Code" else "Article Preview",
+                        modifier = Modifier.size(22.dp),
+                        tint = if (uiState.isHtmlPreviewMode) contentColor else LuminarGold
+                    )
+                }
+            }
+
             if (uiState.usesTextRenderer) {
                 IconButton(
                     onClick = {
@@ -611,7 +650,7 @@ private fun ReaderTopControls(
                                     },
                                     onClick = {
                                         showToc = false
-                                        // TODO: Jump to chapter block index
+                                        onGoToChapter(idx)
                                         onInteraction()
                                     }
                                 )

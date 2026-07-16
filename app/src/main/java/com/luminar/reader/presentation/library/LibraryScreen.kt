@@ -204,11 +204,20 @@ fun LibraryScreen(
                             onQueryChanged = { viewModel.onEvent(LibraryEvent.UpdateSearchQuery(it)) }
                         )
                     } else {
+                        val greeting = remember {
+                            val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+                            when (hour) {
+                                in 5..11 -> "Good morning, Zarrar 🌅"
+                                in 12..17 -> "Good afternoon, Zarrar ☕"
+                                in 18..22 -> "Good evening, Zarrar 🌌"
+                                else -> "Happy reading, Zarrar ✨"
+                            }
+                        }
                         Text(
-                            text = "Luminar",
+                            text = greeting,
                             fontFamily = LuminarTitleFont,
                             fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.headlineMedium,
+                            style = MaterialTheme.typography.titleLarge,
                             color = MaterialTheme.colorScheme.onBackground
                         )
                     }
@@ -548,106 +557,112 @@ private fun LibraryBottomBar(
     onImport: () -> Unit,
     onShowStats: () -> Unit
 ) {
-    Column {
-        // Subtle glass-effect divider
-        HorizontalDivider(
-            color = LuminarGold.copy(alpha = 0.08f),
-            thickness = 0.5.dp
-        )
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        contentAlignment = Alignment.Center
+    ) {
         Surface(
+            modifier = Modifier.fillMaxWidth(),
             color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
-            tonalElevation = 2.dp
+            shape = RoundedCornerShape(28.dp),
+            border = androidx.compose.foundation.BorderStroke(
+                0.5.dp,
+                LuminarGold.copy(alpha = 0.15f)
+            ),
+            tonalElevation = 4.dp
         ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Search
-            BottomBarItem(
-                icon = {
-                    Icon(
-                        painter = painterResource(
-                            if (uiState.isSearchActive) R.drawable.ic_close_24
-                            else R.drawable.ic_search_24
-                        ),
-                        contentDescription = "Search",
-                        modifier = Modifier.size(22.dp)
-                    )
-                },
-                label = if (uiState.isSearchActive) "Close" else "Search",
-                isActive = uiState.isSearchActive,
-                onClick = onToggleSearch
-            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Search
+                BottomBarItem(
+                    icon = {
+                        Icon(
+                            painter = painterResource(
+                                if (uiState.isSearchActive) R.drawable.ic_close_24
+                                else R.drawable.ic_search_24
+                            ),
+                            contentDescription = "Search",
+                            modifier = Modifier.size(22.dp)
+                        )
+                    },
+                    label = if (uiState.isSearchActive) "Close" else "Search",
+                    isActive = uiState.isSearchActive,
+                    onClick = onToggleSearch
+                )
 
-            // View toggle
-            BottomBarItem(
-                icon = {
-                    Icon(
-                        painter = painterResource(
-                            if (uiState.viewMode == ViewMode.GRID) R.drawable.ic_view_list_24
-                            else R.drawable.ic_grid_view_24
-                        ),
-                        contentDescription = null,
-                        modifier = Modifier.size(22.dp)
-                    )
-                },
-                label = if (uiState.viewMode == ViewMode.GRID) "List" else "Grid",
-                onClick = onToggleViewMode
-            )
+                // View toggle
+                BottomBarItem(
+                    icon = {
+                        Icon(
+                            painter = painterResource(
+                                if (uiState.viewMode == ViewMode.GRID) R.drawable.ic_view_list_24
+                                else R.drawable.ic_grid_view_24
+                            ),
+                            contentDescription = null,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    },
+                    label = if (uiState.viewMode == ViewMode.GRID) "List" else "Grid",
+                    onClick = onToggleViewMode
+                )
 
-            // Import (center, prominent — larger, elevated)
-            BottomBarItem(
-                icon = {
-                    androidx.compose.material3.Surface(
-                        modifier = Modifier.size(48.dp),
-                        shape = androidx.compose.foundation.shape.CircleShape,
-                        color = LuminarGold,
-                        shadowElevation = 4.dp
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                painter = painterResource(R.drawable.ic_add_24),
-                                contentDescription = "Import",
-                                tint = Color(0xFF171100),
-                                modifier = Modifier.size(24.dp)
-                            )
+                // Import (center, prominent — larger, elevated)
+                BottomBarItem(
+                    icon = {
+                        androidx.compose.material3.Surface(
+                            modifier = Modifier.size(48.dp),
+                            shape = androidx.compose.foundation.shape.CircleShape,
+                            color = LuminarGold,
+                            shadowElevation = 4.dp
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_add_24),
+                                    contentDescription = "Import",
+                                    tint = Color(0xFF171100),
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
                         }
-                    }
-                },
-                label = "Import",
-                onClick = onImport
-            )
+                    },
+                    label = "Import",
+                    onClick = onImport
+                )
 
-            // Stats
-            BottomBarItem(
-                icon = {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_bar_chart_24),
-                        contentDescription = null,
-                        modifier = Modifier.size(22.dp)
-                    )
-                },
-                label = "Stats",
-                onClick = onShowStats
-            )
+                // Stats
+                BottomBarItem(
+                    icon = {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_bar_chart_24),
+                            contentDescription = null,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    },
+                    label = "Stats",
+                    onClick = onShowStats
+                )
 
-            // Settings
-            BottomBarItem(
-                icon = {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_settings_24),
-                        contentDescription = "Settings",
-                        modifier = Modifier.size(22.dp)
-                    )
-                },
-                label = "Settings",
-                onClick = onOpenSettings
-            )
-        }
+                // Settings
+                BottomBarItem(
+                    icon = {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_settings_24),
+                            contentDescription = "Settings",
+                            modifier = Modifier.size(22.dp)
+                        )
+                    },
+                    label = "Settings",
+                    onClick = onOpenSettings
+                )
+            }
         }
     }
 }
@@ -1096,24 +1111,41 @@ private fun BookCard(
 @Composable
 private fun CoverPlaceholder(bookTitle: String) {
     val firstLetter = bookTitle.firstOrNull()?.uppercaseChar()?.toString() ?: "?"
+    val isDarkTheme = androidx.compose.foundation.isSystemInDarkTheme()
+
+    val gradientColors = if (isDarkTheme) {
+        listOf(
+            LuminarGold.copy(alpha = 0.85f),
+            Color(0xFF3B3014),
+            Color(0xFF111111)
+        )
+    } else {
+        listOf(
+            LuminarGold.copy(alpha = 0.15f),
+            Color(0xFFF9F6F0),
+            Color(0xFFEDEDED)
+        )
+    }
+
+    val textColor = if (isDarkTheme) {
+        Color(0xFF171100)
+    } else {
+        Color(0xFF5C4F22)
+    }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(
                 brush = Brush.linearGradient(
-                    colors = listOf(
-                        LuminarGold.copy(alpha = 0.85f),
-                        Color(0xFF3B3014),
-                        Color(0xFF111111)
-                    )
+                    colors = gradientColors
                 )
             ),
         contentAlignment = Alignment.Center
     ) {
         Text(
             text = firstLetter,
-            color = Color(0xFF171100),
+            color = textColor,
             fontSize = 54.sp,
             fontWeight = FontWeight.SemiBold,
             fontFamily = LuminarTitleFont

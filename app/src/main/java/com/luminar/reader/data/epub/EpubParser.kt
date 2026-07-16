@@ -188,6 +188,7 @@ class EpubParser @Inject constructor() {
         var text = html
         text = HEAD_BLOCK.replace(text, "")
         text = BR_TAG.replace(text, "\n")
+        text = text.replace(Regex("<hr[^>]*>", RegexOption.IGNORE_CASE), "\n\n---\n\n")
         text = CLOSE_P.replace(text, "\n\n")
         text = CLOSE_DIV.replace(text, "\n")
         text = CLOSE_LI.replace(text, "\n")

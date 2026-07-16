@@ -1,0 +1,3504 @@
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index 9b195b9..12247f8 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -15,8 +15,8 @@ android {
+         applicationId = "com.luminar.reader"
+         minSdk = 26
+         targetSdk = 35
+-        versionCode = 1
+-        versionName = "1.0.0"
++        versionCode = 2
++        versionName = "2.0.0"
+         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+     }
+ 
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index 15ba634..664839a 100644
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -1,6 +1,8 @@
+ <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+ 
+     <uses-permission android:name="android.permission.INTERNET" />
++    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
++    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+ 
+     <application
+         android:name=".LuminarApp"
+@@ -56,14 +58,14 @@
+ 
+         <activity
+             android:name=".CrashViewActivity"
+-            android:exported="true"
++            android:exported="false"
+             android:label="Luminar Crash Log"
+-            android:theme="@android:style/Theme.Material.Light.NoActionBar">
+-            <intent-filter>
+-                <action android:name="android.intent.action.MAIN" />
+-                <category android:name="android.intent.category.LAUNCHER" />
+-            </intent-filter>
+-        </activity>
++            android:theme="@android:style/Theme.Material.Light.NoActionBar" />
++
++        <service
++            android:name=".presentation.reader.TtsService"
++            android:foregroundServiceType="mediaPlayback"
++            android:exported="false" />
+ 
+     </application>
+ 
+diff --git a/app/src/main/java/com/luminar/reader/data/document/DocumentParser.kt b/app/src/main/java/com/luminar/reader/data/document/DocumentParser.kt
+index 09d0133..cf27e69 100644
+--- a/app/src/main/java/com/luminar/reader/data/document/DocumentParser.kt
++++ b/app/src/main/java/com/luminar/reader/data/document/DocumentParser.kt
+@@ -95,6 +95,7 @@ class DocumentParser @Inject constructor() {
+             "cbr" -> "# CBR Comic Book\n\nThis file uses RAR compression which requires a proprietary library.\n\n**How to read it:**\n1. Rename the file from `.cbr` to `.rar`\n2. Extract it with a RAR tool\n3. Re-compress the folder as `.zip`\n4. Rename the `.zip` to `.cbz`\n5. Import the `.cbz` file into Luminar\n\nAlternatively, use [Calibre](https://calibre-ebook.com) to convert CBR → CBZ."
+             "cbt" -> "# CBT Comic Book\n\nThis file uses TAR archiving.\n\n**How to read it:**\n1. Extract the `.cbt` file using a TAR tool\n2. Re-compress the images folder as `.zip`\n3. Rename the `.zip` to `.cbz`\n4. Import the `.cbz` file into Luminar"
+             "djvu", "djv" -> "# DjVu Document\n\nDjVu is a specialized image-based format that requires a native rendering library.\n\n**How to read it:**\n- Convert to PDF using an online DjVu-to-PDF converter\n- Or use [DjView](https://djvu.sourceforge.net) on desktop\n- Then import the PDF into Luminar"
++            "html", "htm", "xhtml" -> stripHtmlToMarkdown(file.readText(Charsets.UTF_8))
+             else -> file.readText(Charsets.UTF_8)
+         }
+     }
+@@ -166,9 +167,20 @@ class DocumentParser @Inject constructor() {
+         for (pMatch in PARAGRAPH.findAll(processedXml)) {
+             val paragraph = pMatch.value
+ 
+-            // Check for heading style
+-            val headingLevel = HEADING_STYLE
+-                .find(paragraph)?.groupValues?.get(1)?.toIntOrNull()
++            val hasPageBreak = paragraph.contains("<w:br w:type=\"page\"") ||
++                paragraph.contains("<w:lastRenderedPageBreak")
++            val hasBorder = paragraph.contains("<w:pBdr>")
++
++            if (hasPageBreak || hasBorder) {
++                if (sb.isNotEmpty()) {
++                    sb.appendLine("---")
++                    sb.appendLine()
++                }
++            }
++
++            // Check for heading style (by localized name or outline level)
++            val headingLevel = HEADING_STYLE.find(paragraph)?.groupValues?.get(1)?.toIntOrNull()
++                ?: Regex("""<w:outlineLvl\s+w:val="(\d)"""").find(paragraph)?.groupValues?.get(1)?.toIntOrNull()?.plus(1)
+ 
+             // Check for list (numbered or bullet)
+             val isListItem = paragraph.contains("<w:numPr")
+@@ -998,6 +1010,7 @@ class DocumentParser @Inject constructor() {
+         }
+ 
+         text = BR_TAG.replace(text, "\n")
++        text = text.replace(Regex("<hr[^>]*>", RegexOption.IGNORE_CASE), "\n\n---\n\n")
+         text = CLOSE_P.replace(text, "\n\n")
+         text = CLOSE_DIV.replace(text, "\n")
+         text = LI_OPEN.replace(text, "\n- ")
+@@ -1019,13 +1032,7 @@ class DocumentParser @Inject constructor() {
+      * MUST decode &amp; LAST to avoid double-decoding (e.g. &amp;lt; → &lt; → <).
+      */
+     private fun decodeXmlEntities(text: String): String {
+-        return text
+-            .replace("&lt;", "<")
+-            .replace("&gt;", ">")
+-            .replace("&quot;", "\"")
+-            .replace("&apos;", "'")
+-            .replace("&#39;", "'")
+-            .replace("&amp;", "&") // MUST be last
++        return decodeHtmlEntities(text)
+     }
+ 
+     private fun decodeHtmlEntities(text: String): String {
+diff --git a/app/src/main/java/com/luminar/reader/data/epub/EpubParser.kt b/app/src/main/java/com/luminar/reader/data/epub/EpubParser.kt
+index af8e3a7..5209fc3 100644
+--- a/app/src/main/java/com/luminar/reader/data/epub/EpubParser.kt
++++ b/app/src/main/java/com/luminar/reader/data/epub/EpubParser.kt
+@@ -188,6 +188,7 @@ class EpubParser @Inject constructor() {
+         var text = html
+         text = HEAD_BLOCK.replace(text, "")
+         text = BR_TAG.replace(text, "\n")
++        text = text.replace(Regex("<hr[^>]*>", RegexOption.IGNORE_CASE), "\n\n---\n\n")
+         text = CLOSE_P.replace(text, "\n\n")
+         text = CLOSE_DIV.replace(text, "\n")
+         text = CLOSE_LI.replace(text, "\n")
+diff --git a/app/src/main/java/com/luminar/reader/presentation/library/LibraryScreen.kt b/app/src/main/java/com/luminar/reader/presentation/library/LibraryScreen.kt
+index f71852e..19af6d3 100644
+--- a/app/src/main/java/com/luminar/reader/presentation/library/LibraryScreen.kt
++++ b/app/src/main/java/com/luminar/reader/presentation/library/LibraryScreen.kt
+@@ -204,11 +204,20 @@ fun LibraryScreen(
+                             onQueryChanged = { viewModel.onEvent(LibraryEvent.UpdateSearchQuery(it)) }
+                         )
+                     } else {
++                        val greeting = remember {
++                            val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
++                            when (hour) {
++                                in 5..11 -> "Good morning, Zarrar 🌅"
++                                in 12..17 -> "Good afternoon, Zarrar ☕"
++                                in 18..22 -> "Good evening, Zarrar 🌌"
++                                else -> "Happy reading, Zarrar ✨"
++                            }
++                        }
+                         Text(
+-                            text = "Luminar",
++                            text = greeting,
+                             fontFamily = LuminarTitleFont,
+                             fontWeight = FontWeight.Bold,
+-                            style = MaterialTheme.typography.headlineMedium,
++                            style = MaterialTheme.typography.titleLarge,
+                             color = MaterialTheme.colorScheme.onBackground
+                         )
+                     }
+@@ -548,106 +557,112 @@ private fun LibraryBottomBar(
+     onImport: () -> Unit,
+     onShowStats: () -> Unit
+ ) {
+-    Column {
+-        // Subtle glass-effect divider
+-        HorizontalDivider(
+-            color = LuminarGold.copy(alpha = 0.08f),
+-            thickness = 0.5.dp
+-        )
++    Box(
++        modifier = Modifier
++            .fillMaxWidth()
++            .navigationBarsPadding()
++            .padding(horizontal = 16.dp, vertical = 12.dp),
++        contentAlignment = Alignment.Center
++    ) {
+         Surface(
++            modifier = Modifier.fillMaxWidth(),
+             color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+-            tonalElevation = 2.dp
+-        ) {
+-        Row(
+-            modifier = Modifier
+-                .fillMaxWidth()
+-                .navigationBarsPadding()
+-                .padding(horizontal = 8.dp, vertical = 6.dp),
+-            horizontalArrangement = Arrangement.SpaceEvenly,
+-            verticalAlignment = Alignment.CenterVertically
++            shape = RoundedCornerShape(28.dp),
++            border = androidx.compose.foundation.BorderStroke(
++                0.5.dp,
++                LuminarGold.copy(alpha = 0.15f)
++            ),
++            tonalElevation = 4.dp
+         ) {
+-            // Search
+-            BottomBarItem(
+-                icon = {
+-                    Icon(
+-                        painter = painterResource(
+-                            if (uiState.isSearchActive) R.drawable.ic_close_24
+-                            else R.drawable.ic_search_24
+-                        ),
+-                        contentDescription = "Search",
+-                        modifier = Modifier.size(22.dp)
+-                    )
+-                },
+-                label = if (uiState.isSearchActive) "Close" else "Search",
+-                isActive = uiState.isSearchActive,
+-                onClick = onToggleSearch
+-            )
++            Row(
++                modifier = Modifier
++                    .fillMaxWidth()
++                    .padding(horizontal = 8.dp, vertical = 8.dp),
++                horizontalArrangement = Arrangement.SpaceEvenly,
++                verticalAlignment = Alignment.CenterVertically
++            ) {
++                // Search
++                BottomBarItem(
++                    icon = {
++                        Icon(
++                            painter = painterResource(
++                                if (uiState.isSearchActive) R.drawable.ic_close_24
++                                else R.drawable.ic_search_24
++                            ),
++                            contentDescription = "Search",
++                            modifier = Modifier.size(22.dp)
++                        )
++                    },
++                    label = if (uiState.isSearchActive) "Close" else "Search",
++                    isActive = uiState.isSearchActive,
++                    onClick = onToggleSearch
++                )
+ 
+-            // View toggle
+-            BottomBarItem(
+-                icon = {
+-                    Icon(
+-                        painter = painterResource(
+-                            if (uiState.viewMode == ViewMode.GRID) R.drawable.ic_view_list_24
+-                            else R.drawable.ic_grid_view_24
+-                        ),
+-                        contentDescription = null,
+-                        modifier = Modifier.size(22.dp)
+-                    )
+-                },
+-                label = if (uiState.viewMode == ViewMode.GRID) "List" else "Grid",
+-                onClick = onToggleViewMode
+-            )
++                // View toggle
++                BottomBarItem(
++                    icon = {
++                        Icon(
++                            painter = painterResource(
++                                if (uiState.viewMode == ViewMode.GRID) R.drawable.ic_view_list_24
++                                else R.drawable.ic_grid_view_24
++                            ),
++                            contentDescription = null,
++                            modifier = Modifier.size(22.dp)
++                        )
++                    },
++                    label = if (uiState.viewMode == ViewMode.GRID) "List" else "Grid",
++                    onClick = onToggleViewMode
++                )
+ 
+-            // Import (center, prominent — larger, elevated)
+-            BottomBarItem(
+-                icon = {
+-                    androidx.compose.material3.Surface(
+-                        modifier = Modifier.size(48.dp),
+-                        shape = androidx.compose.foundation.shape.CircleShape,
+-                        color = LuminarGold,
+-                        shadowElevation = 4.dp
+-                    ) {
+-                        Box(contentAlignment = Alignment.Center) {
+-                            Icon(
+-                                painter = painterResource(R.drawable.ic_add_24),
+-                                contentDescription = "Import",
+-                                tint = Color(0xFF171100),
+-                                modifier = Modifier.size(24.dp)
+-                            )
++                // Import (center, prominent — larger, elevated)
++                BottomBarItem(
++                    icon = {
++                        androidx.compose.material3.Surface(
++                            modifier = Modifier.size(48.dp),
++                            shape = androidx.compose.foundation.shape.CircleShape,
++                            color = LuminarGold,
++                            shadowElevation = 4.dp
++                        ) {
++                            Box(contentAlignment = Alignment.Center) {
++                                Icon(
++                                    painter = painterResource(R.drawable.ic_add_24),
++                                    contentDescription = "Import",
++                                    tint = Color(0xFF171100),
++                                    modifier = Modifier.size(24.dp)
++                                )
++                            }
+                         }
+-                    }
+-                },
+-                label = "Import",
+-                onClick = onImport
+-            )
++                    },
++                    label = "Import",
++                    onClick = onImport
++                )
+ 
+-            // Stats
+-            BottomBarItem(
+-                icon = {
+-                    Icon(
+-                        painter = painterResource(R.drawable.ic_bar_chart_24),
+-                        contentDescription = null,
+-                        modifier = Modifier.size(22.dp)
+-                    )
+-                },
+-                label = "Stats",
+-                onClick = onShowStats
+-            )
++                // Stats
++                BottomBarItem(
++                    icon = {
++                        Icon(
++                            painter = painterResource(R.drawable.ic_bar_chart_24),
++                            contentDescription = null,
++                            modifier = Modifier.size(22.dp)
++                        )
++                    },
++                    label = "Stats",
++                    onClick = onShowStats
++                )
+ 
+-            // Settings
+-            BottomBarItem(
+-                icon = {
+-                    Icon(
+-                        painter = painterResource(R.drawable.ic_settings_24),
+-                        contentDescription = "Settings",
+-                        modifier = Modifier.size(22.dp)
+-                    )
+-                },
+-                label = "Settings",
+-                onClick = onOpenSettings
+-            )
+-        }
++                // Settings
++                BottomBarItem(
++                    icon = {
++                        Icon(
++                            painter = painterResource(R.drawable.ic_settings_24),
++                            contentDescription = "Settings",
++                            modifier = Modifier.size(22.dp)
++                        )
++                    },
++                    label = "Settings",
++                    onClick = onOpenSettings
++                )
++            }
+         }
+     }
+ }
+@@ -1096,24 +1111,41 @@ private fun BookCard(
+ @Composable
+ private fun CoverPlaceholder(bookTitle: String) {
+     val firstLetter = bookTitle.firstOrNull()?.uppercaseChar()?.toString() ?: "?"
++    val isDarkTheme = androidx.compose.foundation.isSystemInDarkTheme()
++
++    val gradientColors = if (isDarkTheme) {
++        listOf(
++            LuminarGold.copy(alpha = 0.85f),
++            Color(0xFF3B3014),
++            Color(0xFF111111)
++        )
++    } else {
++        listOf(
++            LuminarGold.copy(alpha = 0.15f),
++            Color(0xFFF9F6F0),
++            Color(0xFFEDEDED)
++        )
++    }
++
++    val textColor = if (isDarkTheme) {
++        Color(0xFF171100)
++    } else {
++        Color(0xFF5C4F22)
++    }
+ 
+     Box(
+         modifier = Modifier
+             .fillMaxSize()
+             .background(
+                 brush = Brush.linearGradient(
+-                    colors = listOf(
+-                        LuminarGold.copy(alpha = 0.85f),
+-                        Color(0xFF3B3014),
+-                        Color(0xFF111111)
+-                    )
++                    colors = gradientColors
+                 )
+             ),
+         contentAlignment = Alignment.Center
+     ) {
+         Text(
+             text = firstLetter,
+-            color = Color(0xFF171100),
++            color = textColor,
+             fontSize = 54.sp,
+             fontWeight = FontWeight.SemiBold,
+             fontFamily = LuminarTitleFont
+diff --git a/app/src/main/java/com/luminar/reader/presentation/reader/ComicReaderView.kt b/app/src/main/java/com/luminar/reader/presentation/reader/ComicReaderView.kt
+index 52d2492..bb24524 100644
+--- a/app/src/main/java/com/luminar/reader/presentation/reader/ComicReaderView.kt
++++ b/app/src/main/java/com/luminar/reader/presentation/reader/ComicReaderView.kt
+@@ -18,6 +18,9 @@ import androidx.compose.runtime.Composable
+ import androidx.compose.runtime.LaunchedEffect
+ import androidx.compose.runtime.getValue
+ import androidx.compose.runtime.mutableFloatStateOf
++import androidx.compose.runtime.produceState
++import kotlinx.coroutines.withContext
++import kotlinx.coroutines.Dispatchers
+ import androidx.compose.runtime.remember
+ import androidx.compose.runtime.setValue
+ import androidx.compose.ui.Alignment
+@@ -103,6 +106,12 @@ fun ComicReaderView(
+     }
+ }
+ 
++sealed interface ComicLoadState {
++    object Loading : ComicLoadState
++    data class Success(val bitmap: android.graphics.Bitmap) : ComicLoadState
++    object Error : ComicLoadState
++}
++
+ @Composable
+ private fun ComicPage(
+     comicFile: File,
+@@ -110,11 +119,16 @@ private fun ComicPage(
+     onTap: () -> Unit,
+     getImageBytes: (File, String) -> ByteArray
+ ) {
+-    val bitmap = remember(comicFile.absolutePath, entryPath) {
+-        runCatching {
+-            val bytes = getImageBytes(comicFile, entryPath)
+-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+-        }.getOrNull()
++    val loadState = produceState<ComicLoadState>(initialValue = ComicLoadState.Loading, comicFile.absolutePath, entryPath) {
++        value = withContext(Dispatchers.IO) {
++            runCatching {
++                val bytes = getImageBytes(comicFile, entryPath)
++                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
++            }.fold(
++                onSuccess = { bmp -> if (bmp != null) ComicLoadState.Success(bmp) else ComicLoadState.Error },
++                onFailure = { ComicLoadState.Error }
++            )
++        }
+     }
+ 
+     var scale by remember { mutableFloatStateOf(1f) }
+@@ -142,26 +156,34 @@ private fun ComicPage(
+             },
+         contentAlignment = Alignment.Center
+     ) {
+-        if (bitmap != null) {
+-            Image(
+-                bitmap = bitmap.asImageBitmap(),
+-                contentDescription = "Comic page",
+-                modifier = Modifier
+-                    .fillMaxSize()
+-                    .graphicsLayer(
+-                        scaleX = scale,
+-                        scaleY = scale,
+-                        translationX = offsetX,
+-                        translationY = offsetY
+-                    ),
+-                contentScale = ContentScale.Fit
+-            )
+-        } else {
+-            Text(
+-                text = "Unable to load page",
+-                color = Color.White.copy(alpha = 0.5f),
+-                fontSize = 14.sp
+-            )
++        when (val state = loadState.value) {
++            ComicLoadState.Loading -> {
++                androidx.compose.material3.CircularProgressIndicator(
++                    color = com.luminar.reader.presentation.theme.LuminarGold.copy(alpha = 0.5f)
++                )
++            }
++            is ComicLoadState.Success -> {
++                Image(
++                    bitmap = state.bitmap.asImageBitmap(),
++                    contentDescription = "Comic page",
++                    modifier = Modifier
++                        .fillMaxSize()
++                        .graphicsLayer(
++                            scaleX = scale,
++                            scaleY = scale,
++                            translationX = offsetX,
++                            translationY = offsetY
++                        ),
++                    contentScale = ContentScale.Fit
++                )
++            }
++            ComicLoadState.Error -> {
++                Text(
++                    text = "Unable to load page",
++                    color = Color.White.copy(alpha = 0.5f),
++                    fontSize = 14.sp
++                )
++            }
+         }
+     }
+ }
+diff --git a/app/src/main/java/com/luminar/reader/presentation/reader/ReaderScreen.kt b/app/src/main/java/com/luminar/reader/presentation/reader/ReaderScreen.kt
+index 4cd7c1b..3b0382d 100644
+--- a/app/src/main/java/com/luminar/reader/presentation/reader/ReaderScreen.kt
++++ b/app/src/main/java/com/luminar/reader/presentation/reader/ReaderScreen.kt
+@@ -235,12 +235,17 @@ fun ReaderScreen(
+                         val renderFormat = when {
+                             uiState.isEpub -> BookFormat.MARKDOWN
+                             uiState.isDocument -> BookFormat.MARKDOWN
++                            uiState.isHtml -> if (uiState.isHtmlPreviewMode) BookFormat.MARKDOWN else BookFormat.XML
+                             else -> book.format
+                         }
++                        val renderingMode = when {
++                            uiState.isHtml -> if (uiState.isHtmlPreviewMode) RenderingMode.MARKDOWN else RenderingMode.CODE
++                            else -> book.format.renderingMode
++                        }
+                         TextReaderView(
+                             content = textContent,
+                             format = renderFormat,
+-                            renderingMode = book.format.renderingMode,
++                            renderingMode = renderingMode,
+                             theme = uiState.currentTheme,
+                             fontScale = uiState.fontScale,
+                             searchQuery = uiState.searchQuery,
+@@ -316,6 +321,12 @@ fun ReaderScreen(
+                     onGoToBookmark = { bookmark ->
+                         viewModel.onEvent(ReaderEvent.GoToBookmark(bookmark))
+                     },
++                    onToggleHtmlViewMode = {
++                        viewModel.onEvent(ReaderEvent.ToggleHtmlViewMode)
++                    },
++                    onGoToChapter = { chapterIndex ->
++                        viewModel.onEvent(ReaderEvent.GoToChapter(chapterIndex))
++                    },
+                     onInteraction = viewModel::onControlsInteraction
+                 )
+ 
+@@ -405,6 +416,8 @@ private fun PdfReaderView(
+                     .enableSwipe(true)
+                     .swipeHorizontal(true)
+                     .enableDoubletap(true)
++                    .enableAntialiasing(true)
++                    .pageFitPolicy(com.github.barteksc.pdfviewer.util.FitPolicy.WIDTH)
+                     .onPageChange { page, _ ->
+                         onPageChanged(page)
+                     }
+@@ -450,6 +463,8 @@ private fun ReaderControlsOverlay(
+     onToggleTts: () -> Unit,
+     onToggleBookmark: () -> Unit,
+     onGoToBookmark: (Bookmark) -> Unit,
++    onToggleHtmlViewMode: () -> Unit,
++    onGoToChapter: (Int) -> Unit,
+     onInteraction: () -> Unit
+ ) {
+     AnimatedVisibility(
+@@ -492,6 +507,8 @@ private fun ReaderControlsOverlay(
+                 onToggleTts = onToggleTts,
+                 onToggleBookmark = onToggleBookmark,
+                 onGoToBookmark = onGoToBookmark,
++                onToggleHtmlViewMode = onToggleHtmlViewMode,
++                onGoToChapter = onGoToChapter,
+                 onInteraction = onInteraction
+             )
+ 
+@@ -517,6 +534,8 @@ private fun ReaderTopControls(
+     onToggleTts: () -> Unit,
+     onToggleBookmark: () -> Unit,
+     onGoToBookmark: (Bookmark) -> Unit,
++    onToggleHtmlViewMode: () -> Unit,
++    onGoToChapter: (Int) -> Unit,
+     onInteraction: () -> Unit
+ ) {
+     val containerColor = uiState.currentTheme.readerControlsContainerColor()
+@@ -571,6 +590,26 @@ private fun ReaderTopControls(
+                 }
+             }
+ 
++            // HTML View Mode switcher toggle button (HTML files only)
++            if (uiState.isHtml) {
++                IconButton(
++                    onClick = {
++                        onInteraction()
++                        onToggleHtmlViewMode()
++                    }
++                ) {
++                    Icon(
++                        painter = painterResource(
++                            if (uiState.isHtmlPreviewMode) R.drawable.ic_view_list_24
++                            else R.drawable.ic_auto_stories_48
++                        ),
++                        contentDescription = if (uiState.isHtmlPreviewMode) "Source Code" else "Article Preview",
++                        modifier = Modifier.size(22.dp),
++                        tint = if (uiState.isHtmlPreviewMode) contentColor else LuminarGold
++                    )
++                }
++            }
++
+             if (uiState.usesTextRenderer) {
+                 IconButton(
+                     onClick = {
+@@ -611,7 +650,7 @@ private fun ReaderTopControls(
+                                     },
+                                     onClick = {
+                                         showToc = false
+-                                        // TODO: Jump to chapter block index
++                                        onGoToChapter(idx)
+                                         onInteraction()
+                                     }
+                                 )
+diff --git a/app/src/main/java/com/luminar/reader/presentation/reader/ReaderViewModel.kt b/app/src/main/java/com/luminar/reader/presentation/reader/ReaderViewModel.kt
+index 12932fd..0046071 100644
+--- a/app/src/main/java/com/luminar/reader/presentation/reader/ReaderViewModel.kt
++++ b/app/src/main/java/com/luminar/reader/presentation/reader/ReaderViewModel.kt
+@@ -62,7 +62,8 @@ data class ReaderUiState(
+     val lastErrorThrowable: Throwable? = null,
+     val showErrorReport: Boolean = false,
+     val bookmarks: List<Bookmark> = emptyList(),
+-    val isCurrentPageBookmarked: Boolean = false
++    val isCurrentPageBookmarked: Boolean = false,
++    val isHtmlPreviewMode: Boolean = true
+ ) {
+     val totalChapters: Int
+         get() = chapterTitles.size
+@@ -103,6 +104,9 @@ data class ReaderUiState(
+     val isDocument: Boolean
+         get() = book?.format?.isDocumentFormat == true
+ 
++    val isHtml: Boolean
++        get() = book?.format == BookFormat.HTML
++
+     val isComicBook: Boolean
+         get() = book?.format?.isComicBook == true
+ 
+@@ -150,6 +154,9 @@ sealed interface ReaderEvent {
+     data object ToggleBookmark : ReaderEvent
+     data class GoToBookmark(val bookmark: Bookmark) : ReaderEvent
+     data class DeleteBookmark(val bookmark: Bookmark) : ReaderEvent
++    // Chapter navigation
++    data class GoToChapter(val chapterIndex: Int) : ReaderEvent
++    data object ToggleHtmlViewMode : ReaderEvent
+ }
+ 
+ @OptIn(FlowPreview::class)
+@@ -213,6 +220,8 @@ class ReaderViewModel @Inject constructor(
+             ReaderEvent.ToggleBookmark -> toggleBookmark()
+             is ReaderEvent.GoToBookmark -> goToPage(event.bookmark.page)
+             is ReaderEvent.DeleteBookmark -> deleteBookmark(event.bookmark)
++            is ReaderEvent.GoToChapter -> goToChapter(event.chapterIndex)
++            ReaderEvent.ToggleHtmlViewMode -> toggleHtmlViewMode()
+             ReaderEvent.OpenSearch -> openSearch()
+             ReaderEvent.CloseSearch -> closeSearch()
+             is ReaderEvent.UpdateSearchQuery -> updateSearchQuery(event.query)
+@@ -261,12 +270,25 @@ class ReaderViewModel @Inject constructor(
+         }
+     }
+ 
++    // Cache start-block index for each chapter
++    private var chapterBlockIndices: List<Int> = emptyList()
++
+     /**
+      * Called by TextReaderView after it has parsed its blocks,
+      * so the VM can search through them.
+      */
+     fun onBlocksParsed(blockTexts: List<String>) {
+         parsedBlockTexts = blockTexts
++        
++        // Map each chapter title to its starting text block index
++        val titles = _uiState.value.chapterTitles
++        chapterBlockIndices = titles.map { title ->
++            val index = blockTexts.indexOfFirst { text ->
++                text.trim().equals(title.trim(), ignoreCase = true)
++            }
++            index.coerceAtLeast(0)
++        }
++
+         // Re-run search if there's an active query
+         val query = _uiState.value.searchQuery
+         if (query.isNotEmpty()) {
+@@ -274,6 +296,26 @@ class ReaderViewModel @Inject constructor(
+         }
+     }
+ 
++    private fun goToChapter(chapterIndex: Int) {
++        val titles = _uiState.value.chapterTitles
++        val targetTitle = titles.getOrNull(chapterIndex) ?: return
++        
++        val blockIdx = parsedBlockTexts.indexOfFirst { text ->
++            text.trim().equals(targetTitle.trim(), ignoreCase = true)
++        }
++        
++        if (blockIdx >= 0) {
++            _uiState.update { state ->
++                state.copy(
++                    currentChapterIndex = chapterIndex,
++                    currentPage = chapterIndex,
++                    scrollToBlockIndex = blockIdx
++                )
++            }
++        }
++        onControlsInteraction()
++    }
++
+     private fun toggleTts() {
+         val state = _uiState.value
+         val ttsState = ttsController.state.value
+@@ -548,7 +590,13 @@ class ReaderViewModel @Inject constructor(
+     private fun loadTextContent(book: Book) {
+         viewModelScope.launch {
+             try {
+-                val content = bookRepository.readTextContent(book)
++                val content = if (book.format == BookFormat.CSV) {
++                    bookRepository.readTextContent(book)
++                } else if (book.format == BookFormat.HTML && _uiState.value.isHtmlPreviewMode) {
++                    bookRepository.readDocumentContent(book)
++                } else {
++                    bookRepository.readTextContent(book)
++                }
+                 val words = content.split(Regex("\\s+")).count { it.isNotBlank() }
+                 val chars = content.length
+                 _uiState.update {
+@@ -566,6 +614,14 @@ class ReaderViewModel @Inject constructor(
+         }
+     }
+ 
++    private fun toggleHtmlViewMode() {
++        val book = _uiState.value.book ?: return
++        val newMode = !_uiState.value.isHtmlPreviewMode
++        _uiState.update { it.copy(isHtmlPreviewMode = newMode, textContent = null) }
++        loadTextContent(book)
++        onControlsInteraction()
++    }
++
+     private fun observeInitialProgress() {
+         viewModelScope.launch {
+             val progress = bookRepository.getProgress(bookId).first()
+@@ -640,7 +696,24 @@ class ReaderViewModel @Inject constructor(
+     }
+ 
+     private fun onScrollPositionChanged(position: Int) {
+-        _uiState.update { it.copy(scrollPosition = position) }
++        _uiState.update { state ->
++            var activeChapterIdx = state.currentChapterIndex
++            if (chapterBlockIndices.isNotEmpty()) {
++                activeChapterIdx = 0
++                for (i in chapterBlockIndices.indices.reversed()) {
++                    if (position >= chapterBlockIndices[i]) {
++                        activeChapterIdx = i
++                        break
++                    }
++                }
++            }
++            
++            state.copy(
++                scrollPosition = position,
++                currentChapterIndex = activeChapterIdx,
++                currentPage = activeChapterIdx
++            )
++        }
+         pageChanges.tryEmit(position)
+     }
+ 
+diff --git a/app/src/main/java/com/luminar/reader/presentation/reader/TtsController.kt b/app/src/main/java/com/luminar/reader/presentation/reader/TtsController.kt
+index 80df493..b2b172f 100644
+--- a/app/src/main/java/com/luminar/reader/presentation/reader/TtsController.kt
++++ b/app/src/main/java/com/luminar/reader/presentation/reader/TtsController.kt
+@@ -79,12 +79,14 @@ class TtsController @Inject constructor(
+                             speakChunk(currentIndex)
+                         } else {
+                             _state.update { it.copy(isSpeaking = false, currentChunkIndex = 0) }
++                            TtsService.stop(context)
+                         }
+                     }
+ 
+                     @Deprecated("Deprecated in API")
+                     override fun onError(utteranceId: String?) {
+                         _state.update { it.copy(isSpeaking = false) }
++                        TtsService.stop(context)
+                     }
+                 })
+             }
+@@ -112,17 +114,20 @@ class TtsController @Inject constructor(
+ 
+         if (chunks.isNotEmpty()) {
+             speakChunk(currentIndex)
++            TtsService.start(context)
+         }
+     }
+ 
+     fun pause() {
+         tts?.stop()
+         _state.update { it.copy(isSpeaking = false) }
++        TtsService.stop(context)
+     }
+ 
+     fun resume() {
+         if (chunks.isNotEmpty() && currentIndex < chunks.size) {
+             speakChunk(currentIndex)
++            TtsService.start(context)
+         }
+     }
+ 
+@@ -131,6 +136,7 @@ class TtsController @Inject constructor(
+         currentIndex = 0
+         chunks = emptyList()
+         _state.update { it.copy(isSpeaking = false, currentChunkIndex = 0, totalChunks = 0) }
++        TtsService.stop(context)
+     }
+ 
+     fun skipForward() {
+diff --git a/app/src/main/java/com/luminar/reader/presentation/reader/TtsService.kt b/app/src/main/java/com/luminar/reader/presentation/reader/TtsService.kt
+new file mode 100644
+index 0000000..3debef4
+--- /dev/null
++++ b/app/src/main/java/com/luminar/reader/presentation/reader/TtsService.kt
+@@ -0,0 +1,90 @@
++// app/src/main/java/com/luminar/reader/presentation/reader/TtsService.kt
++package com.luminar.reader.presentation.reader
++
++import android.app.Notification
++import android.app.NotificationChannel
++import android.app.NotificationManager
++import android.app.PendingIntent
++import android.app.Service
++import android.content.Context
++import android.content.Intent
++import android.os.Build
++import android.os.IBinder
++import androidx.core.app.NotificationCompat
++import com.luminar.reader.MainActivity
++
++class TtsService : Service() {
++
++    companion object {
++        private const val CHANNEL_ID = "tts_channel"
++        private const val NOTIFICATION_ID = 101
++        
++        fun start(context: Context) {
++            val intent = Intent(context, TtsService::class.java)
++            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
++                context.startForegroundService(intent)
++            } else {
++                context.startService(intent)
++            }
++        }
++        
++        fun stop(context: Context) {
++            val intent = Intent(context, TtsService::class.java)
++            context.stopService(intent)
++        }
++    }
++
++    override fun onCreate() {
++        super.onCreate()
++        createNotificationChannel()
++    }
++
++    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
++        val notification = buildNotification()
++        startForeground(NOTIFICATION_ID, notification)
++        return START_STICKY
++    }
++
++    override fun onBind(intent: Intent?): IBinder? = null
++
++    private fun buildNotification(): Notification {
++        val intent = Intent(this, MainActivity::class.java).apply {
++            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
++        }
++        val pendingIntent = PendingIntent.getActivity(
++            this, 0, intent,
++            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
++        )
++
++        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
++            .setContentTitle("Luminar Read Aloud")
++            .setContentText("Reading document text in background...")
++            .setContentIntent(pendingIntent)
++            .setOngoing(true)
++            .setCategory(NotificationCompat.CATEGORY_SERVICE)
++            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
++
++        // Try to load system volume up icon as notification icon if custom one isn't available
++        val iconResId = runCatching {
++            android.R.drawable.ic_media_play
++        }.getOrDefault(android.R.drawable.stat_sys_speakerphone)
++
++        builder.setSmallIcon(iconResId)
++
++        return builder.build()
++    }
++
++    private fun createNotificationChannel() {
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
++            val channel = NotificationChannel(
++                CHANNEL_ID,
++                "Luminar Read Aloud",
++                NotificationManager.IMPORTANCE_LOW
++            ).apply {
++                description = "Notification for background document reading"
++            }
++            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
++            manager.createNotificationChannel(channel)
++        }
++    }
++}
+diff --git a/app/src/main/java/com/luminar/reader/presentation/settings/SettingsScreen.kt b/app/src/main/java/com/luminar/reader/presentation/settings/SettingsScreen.kt
+index a041329..585d1e0 100644
+--- a/app/src/main/java/com/luminar/reader/presentation/settings/SettingsScreen.kt
++++ b/app/src/main/java/com/luminar/reader/presentation/settings/SettingsScreen.kt
+@@ -35,6 +35,7 @@ import androidx.compose.ui.graphics.Color
+ import androidx.compose.ui.res.painterResource
+ import androidx.compose.ui.text.font.FontWeight
+ import androidx.compose.ui.unit.dp
++import androidx.compose.ui.unit.sp
+ import androidx.hilt.navigation.compose.hiltViewModel
+ import androidx.lifecycle.compose.collectAsStateWithLifecycle
+ import com.luminar.reader.R
+@@ -243,6 +244,25 @@ fun SettingsScreen(
+                 }
+             }
+ 
++            item {
++                SectionHeader(text = "PREMIUM DESIGN THEME PRESETS (v2.0 PREVIEW)")
++            }
++
++            item {
++                PreferenceGroup {
++                    designPresetsList.forEachIndexed { idx, preset ->
++                        PresetOptionRow(
++                            title = preset.title,
++                            subtitle = preset.subtitle,
++                            premium = true
++                        )
++                        if (idx < designPresetsList.lastIndex) {
++                            PreferenceDivider()
++                        }
++                    }
++                }
++            }
++
+             item {
+                 SectionHeader(text = "ABOUT")
+             }
+@@ -447,6 +467,38 @@ private fun formatReadingTime(minutes: Long): String {
+     }
+ }
+ 
++@Composable
++private fun PresetOptionRow(
++    title: String,
++    subtitle: String,
++    premium: Boolean
++) {
++    ListItem(
++        headlineContent = { Text(text = title, fontWeight = FontWeight.Medium) },
++        supportingContent = { Text(text = subtitle) },
++        trailingContent = {
++            if (premium) {
++                Surface(
++                    color = LuminarGold.copy(alpha = 0.15f),
++                    contentColor = LuminarGold,
++                    shape = RoundedCornerShape(8.dp),
++                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
++                ) {
++                    Text(
++                        text = "PREMIUM",
++                        fontSize = 9.sp,
++                        fontWeight = FontWeight.Bold,
++                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
++                    )
++                }
++            }
++        },
++        colors = ListItemDefaults.colors(
++            containerColor = Color.Transparent
++        )
++    )
++}
++
+ @Composable
+ private fun PreferenceDivider() {
+     HorizontalDivider(
+@@ -454,3 +506,38 @@ private fun PreferenceDivider() {
+         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
+     )
+ }
++
++private data class DesignPreset(val title: String, val subtitle: String)
++
++private val designPresetsList = listOf(
++    DesignPreset("Skeuomorphism", "Early iOS tactile 3D leather calendars & wooden shelves"),
++    DesignPreset("Flat design", "Solid colors and simple shapes with zero gradients or shadows"),
++    DesignPreset("Material Design", "Flat layers with subtle depth shadows simulating paper sheets"),
++    DesignPreset("Neumorphism (soft UI)", "Extruded monochrome surfaces with soft volumetric shadows"),
++    DesignPreset("Glassmorphism", "Frosted glass overlays with blur, transparency, and borders"),
++    DesignPreset("Claymorphism", "Puffy, rounded clay-like shapes with soft volumetric shadows"),
++    DesignPreset("Minimalism", "Stripped down to essentials, heavy white space, clean typography"),
++    DesignPreset("Brutalism / Neubrutalism", "Raw typography, thick black borders, and clashing bold colors"),
++    DesignPreset("Maximalism", "Dense layouts, bold colors, layered textures, and high visual density"),
++    DesignPreset("Swiss / International Typographic Style", "Grid-based layouts, sans-serif typography, and strong hierarchy"),
++    DesignPreset("Retro / Vaporwave / Y2K", "Nostalgic pixel art, chrome text, glitch effects, and neon gradients"),
++    DesignPreset("Cyberpunk / Neon UI", "OLED black backgrounds with glowing neon-line accents"),
++    DesignPreset("Bento grid design", "Modular, rounded grid boxes organized like Apple product slides"),
++    DesignPreset("Dark mode / Monochrome", "Near-black backgrounds with limited accents to reduce eye strain"),
++    DesignPreset("Aurora / Mesh gradient design", "Soft, blurred, colorful gradient blobs as fluid backgrounds"),
++    DesignPreset("Paper UI / Papercraft", "Layered cutout shapes simulating stacked sheets of real paper"),
++    DesignPreset("Editorial / Print-inspired web", "Magazine layouts: serif headlines, column grids, and pull quotes"),
++    DesignPreset("Riso (Risograph) style", "Grainy, slightly misaligned color layers resembling screen-printing"),
++    DesignPreset("Newsprint UI", "Off-white cream backgrounds, halftone dot textures, and news serif"),
++    DesignPreset("Parchment / Vellum", "Warm cream tones, subtle paper-grain textures, and soft aged edges"),
++    DesignPreset("Slate / Charcoal minimalism", "Calmer dark grey-blue backgrounds with muted accent colors"),
++    DesignPreset("Concrete / Stone UI", "Subtle noise texture on cards resembling raw concrete and slate"),
++    DesignPreset("Linen / Fabric texture", "Soft woven woven-fabric textures used in classic macOS notes"),
++    DesignPreset("Chalkboard / Blackboard UI", "Dark slate-green background with chalk-style sketchy typography"),
++    DesignPreset("Blueprint UI", "Navy background with white grid lines and technical-drawing icons"),
++    DesignPreset("Notebook / Sketch UI", "Lined paper backgrounds, handwritten-style fonts, and doodle icons"),
++    DesignPreset("Terrazzo", "Speckled multi-color stone pattern as accent blocks"),
++    DesignPreset("Cork board UI", "Textured tan cork background with pinned cards and post-it notes"),
++    DesignPreset("Grain/Noise minimalism", "Clean flat layout with a subtle film-grain texture overlay"),
++    DesignPreset("Frosted stone / Matte slate cards", "Textured matte slate-grey finish with soft inset shadows")
++)
+diff --git a/docs/CONSOLIDATED_ROADMAP_PHASES_7_TO_11.md b/docs/CONSOLIDATED_ROADMAP_PHASES_7_TO_11.md
+new file mode 100644
+index 0000000..f6ee8d7
+--- /dev/null
++++ b/docs/CONSOLIDATED_ROADMAP_PHASES_7_TO_11.md
+@@ -0,0 +1,148 @@
++# Luminar Reader — Consolidated Roadmap (Phases 7–11)
++
++*Compiled on: July 14, 2026*
++*Objective: Unifying the Strategic Plan, UI/UX Repairs, and Document Formatting PRDs into a clear, sequential development pipeline.*
++
++---
++
++## Roadmap Overview
++
++This consolidated roadmap maps all of our previous audits and product requirement documents into **five sequential development phases (Phases 7 through 11)**. 
++
++By executing this progressive, step-by-step pipeline, you will systematically resolve your hidden engine bugs, eliminate UI main-thread jank, preserve complex document layouts, and deliver world-class premium features like background TTS and decentralized sync.
++
++```
++  ┌──────────────────────────────────────────────────────────────┐
++  │  PHASE 7: Critical UI/UX Repair & Chapter Navigation         │
++  └──────────────────────────────┬───────────────────────────────┘
++                                 v
++  ┌──────────────────────────────────────────────────────────────┐
++  │  PHASE 8: High-Performance Comic Engine & Layout Preservation│
++  └──────────────────────────────┬───────────────────────────────┘
++                                 v
++  ┌──────────────────────────────────────────────────────────────┐
++  │  PHASE 9: Hybrid HTML Reader & Theme-Aware Visuals           │
++  └──────────────────────────────┬───────────────────────────────┘
++                                 v
++  ┌──────────────────────────────────────────────────────────────┐
++  │  PHASE 10: Multilingual Decodings & SQLite FTS5 Search        │
++  └──────────────────────────────┬───────────────────────────────┘
++                                 v
++  ┌──────────────────────────────────────────────────────────────┐
++  │  PHASE 11: Foreground Services (Background TTS & Cloud Sync) │
++  └──────────────────────────────────────────────────────────────┘
++```
++
++---
++
++## 📅 Phase 7: Critical UI/UX Repair & Chapter Navigation
++*Objective: Revive broken/placeholder functionalities and restore basic, intuitive reader utilities.*
++
++| Parameter | Specification |
++|---|---|
++| **Effort / Complexity** | Low-Medium |
++| **User Impact** | Extremely High (Resolves the most obvious broken-feeling bugs) |
++| **Files to Edit** | `ReaderScreen.kt`, `ReaderViewModel.kt`, `TextReaderView.kt` |
++
++### 🛠️ Execution Plan:
++1.  **Functional Chapter Jumping (TOC Revival):**
++    *   Introduce `ReaderEvent.GoToChapter(chapterIndex: Int)` inside `ReaderViewModel.kt`.
++    *   When clicked, have the ViewModel scan the list of parsed `blockTexts` for the Level-1 Markdown heading (`# Chapter Title`) corresponding to that chapter's title.
++    *   Update `scrollToBlockIndex` with that block's index. The existing `LaunchedEffect` in `TextReaderView.kt` will automatically animate the scroll to the target block.
++2.  **Live Progress Tracking & Active Chapter Headers:**
++    *   Currently, the top header bar displays "Ch. 1 of 12" and the bottom progress bar stays stuck at `0%` forever as the user scrolls through any text-based format.
++    *   In the ViewModel, scan the parsed blocks to map which block index ranges correspond to which chapter indices (e.g., Chapter 1: blocks 0–40, Chapter 2: blocks 41–95).
++    *   In `onScrollPositionChanged(firstVisibleBlockIndex)`, check which chapter range the block index falls into and dynamically update `uiState.currentPage` and `uiState.currentChapterIndex`, immediately animating your gold progress bar in real-time as the user scrolls.
++3.  **PDF Pinch-To-Zoom Gestures:**
++    *   Configure `.enableDoubletap(true)` and `.enableAntialiasing(true)` inside the native configuration block of the `AndroidView` wrapper in `PdfReaderView` (inside `ReaderScreen.kt`), allowing users to zoom in and read small text.
++
++---
++
++## 📅 Phase 8: High-Performance Comic Engine & Layout Preservation
++*Objective: Eliminate scroll jank in Comic Mode and preserve complex document layouts (page breaks, alignments, dividers).*
++
++| Parameter | Specification |
++|---|---|
++| **Effort / Complexity** | Medium |
++| **User Impact** | Very High (Buttery-smooth scrolling and premium document formatting) |
++| **Files to Edit** | `ComicReaderView.kt`, `DocumentParser.kt`, `EpubParser.kt`, `TextReaderView.kt` |
++
++### 🛠️ Execution Plan:
++1.  **Asynchronous Comic Page Loading:**
++    *   Remove synchronous file unzipping and `BitmapFactory.decodeByteArray` from the Main (UI) thread inside `ComicPage`'s `remember` block.
++    *   Shift decoding tasks entirely to background threads (`Dispatchers.IO`) utilizing a Compose `produceState` or background `LaunchedEffect`.
++    *   Render a subtle shimmer loading block while the image is loading, keeping page swipes at 60–120 FPS.
++2.  **DOCX Page Breaks and Dividers:**
++    *   Update `docxXmlToText` inside `DocumentParser.kt` to scan for page break markers (`<w:br w:type="page"/>` or `<w:lastRenderedPageBreak/>`) and section separators.
++    *   When matched, append a Markdown divider `\n\n---\n\n`. This parses directly as a native `TextBlock.Divider` in `TextReaderView`, rendering as a beautiful Material 3 `HorizontalDivider` line.
++3.  **Horizontal Rule Scene Splits for EPUB & MOBI:**
++    *   Replace `<hr[^>]*>` tags inside `stripHtmlToMarkdown()` and `htmlToPlainText()` with `\n\n---\n\n` instead of stripping them, preserving crucial author perspective/scene shifts.
++4.  **Text Alignment & Blockquote Preservation:**
++    *   Detect paragraph alignment markers `<w:jc w:val="center|right"/>` and map them to Compose `TextAlign.Center` and `TextAlign.End` inside `TextReaderView`.
++    *   Detect Word indents `<w:ind w:left="X"/>` and format those runs as Markdown Blockquotes (`> Quote text`), triggering vertical Gold accent bars.
++
++---
++
++## 📅 Phase 9: Hybrid HTML Reader & Theme-Aware Visuals
++*Objective: Deliver a dual-mode HTML view for power users and establish unified Light/Dark mode consistency.*
++
++| Parameter | Specification |
++|---|---|
++| **Effort / Complexity** | Low-Medium |
++| **User Impact** | High (Adds an extremely unique developer utility and visual polish) |
++| **Files to Edit** | `ReaderScreen.kt`, `ReaderViewModel.kt`, `LibraryScreen.kt`, `TextReaderView.kt` |
++
++### 🛠️ Execution Plan:
++1.  **HTML Mode Switcher UI:**
++    *   Add a toggle button inside the top toolbar of `ReaderScreen.kt` (only visible when `book.format == BookFormat.HTML`).
++    *   **Visual Icons:** If Preview is active, display a terminal icon 💻 ("Switch to Code"). If Code is active, display a globe icon 🌐 ("Switch to Preview").
++2.  **HTML View State Engine:**
++    *   Introduce `ReaderEvent.ToggleHtmlViewMode` which toggles a `isHtmlPreviewMode: Boolean` flag in the state.
++    *   **If True (Preview Mode):** Load the file, route it through `stripHtmlToMarkdown()`, and set `renderFormat = BookFormat.MARKDOWN`.
++    *   **If False (Code Mode):** Load the file as a raw text string and set `renderFormat = BookFormat.XML`, rendering it in a syntax-highlighted dark monospace container with line numbers.
++3.  **Theme-Aware Cover Placeholders:**
++    *   Refactor `CoverPlaceholder` in `LibraryScreen.kt` to be theme-aware.
++    *   In Light Mode, swap the AMOLED pitch-black and dark-gold gradient for a soft, light gold-tinted paper background and dark-charcoal text, preserving Light Mode's visual weight.
++
++---
++
++## 📅 Phase 10: Multilingual Decodings & SQLite FTS5 Search
++*Objective: Fix non-English rendering bugs and upgrade search indexing performance.*
++
++| Parameter | Specification |
++|---|---|
++| **Effort / Complexity** | Low-Medium |
++| **User Impact** | Critical (Unlocks global multilingual support and fast relevance search rankings) |
++| **Files to Edit** | `DocumentParser.kt`, `AppDatabase.kt` (Room database), `BookDao.kt` |
++
++### 🛠️ Execution Plan:
++1.  **Unified Multilingual Entity Decoders:**
++    *   Currently, `decodeXmlEntities` is crippled and ignores decimal and hex entities like `&#20013;` (Chinese characters), mathematical symbols, and curly quotes, rendering non-English files unreadable.
++    *   Swap out `decodeXmlEntities` inside `DocumentParser.kt`. Force DOCX, XLSX, and PPTX parsers to use your robust, regex-backed `decodeHtmlEntities` (which already decodes decimal and hexadecimal entities perfectly).
++2.  **Non-English DOCX Heading Support:**
++    *   Your DOCX parser only detects headings if they contain the English style name `"Heading"`.
++    *   Modify your heading style detection to check the underlying Word heading layout hierarchy index properties (`w:outlineLvl`) instead of localized name strings, ensuring headings render perfectly on French, German, or Spanish Word documents.
++3.  **SQLite FTS5 Database Migration:**
++    *   FTS5 is natively supported on 100% of devices running Android API 26+ (your minimum SDK).
++    *   Safely migrate your Room search database virtual tables from FTS4 to FTS5.
++    *   Unlock the **BM25 Relevance Ranking algorithm** so that in-book search matches are sorted by relevance and matches density, rather than raw sequential order.
++
++---
++
++## 📅 Phase 11: Foreground Services (Background TTS & Cloud Sync)
++*Objective: Transition TTS to lockscreen-standard background playing and implement encrypted personal sync.*
++
++| Parameter | Specification |
++|---|---|
++| **Effort / Complexity** | High |
++| **User Impact** | Extremely High (Delivers massive, commercial-grade premium features) |
++| **Files to Edit** | `TtsController.kt`, `AndroidManifest.xml`, `TtsService.kt` (New), `SyncRepository.kt` (New) |
++
++### 🛠️ Execution Plan:
++1.  **TTS Background Foreground Service:**
++    *   Bind your singleton `TtsController` actions to a background-running Android `Foreground Service` (`TtsService`).
++    *   Create a persistent notification utilizing a `MediaStyle` structure containing Play, Pause, Skip, and Stop actions. This prevents the Android OS from aggressively killing the reading voice when the screen turns off or the user switches apps.
++2.  **Decentralized WebDAV / personal Cloud Sync:**
++    *   Build a personal backup and sync repository.
++    *   Compile bookmarks, reading progress, and custom tags into a highly compressed, encrypted JSON sync file (`luminar_sync.json.gz`).
++    *   Let the user connect their own storage provider—**Google Drive, Dropbox, or any custom WebDAV/Nextcloud server**—and sync reading progress securely without hosting any proprietary cloud servers.
+diff --git a/docs/DESIGN_PRESERVATION_AND_HTML_TOGGLE_PRD.md b/docs/DESIGN_PRESERVATION_AND_HTML_TOGGLE_PRD.md
+new file mode 100644
+index 0000000..71029f0
+--- /dev/null
++++ b/docs/DESIGN_PRESERVATION_AND_HTML_TOGGLE_PRD.md
+@@ -0,0 +1,129 @@
++# PRD — Design Preservation & Togglable HTML View (SSS+ Grade)
++
++*Prepared on: July 14, 2026*
++*Target: Implementing visual design preservation for documents and a hybrid HTML code/preview switcher*
++
++---
++
++## Part 1: Preserving "The Design" (Formatting & Layout Preservation)
++
++Currently, Luminar parses Word documents (`DOCX`/`ODT`) and E-books (`EPUB`/`MOBI`) into flattened, single-column plain text paragraphs. While highly readable, this approach strips away crucial structural cues—such as **horizontal line separators, page breaks, text alignments (centered poetry, right-aligned signatures), and bold section headers**—making documents look plain and generic.
++
++To elevate this to **SSS+ standard**, we can utilize Luminar's existing Markdown rendering capabilities in `TextReaderView` to map Word and E-book layout styles directly into native Compose elements.
++
++---
++
++### 📐 1. Word Document (`DOCX` / `ODT`) Structure Mapping
++
++To prevent DOCX files from rendering as flat text dumps, we will map three layout parameters from the underlying OpenXML format into Markdown:
++
++#### A. Page Breaks & Horizontal Lines (`---` mapping)
++*   **The Issue:** Microsoft Word saves page breaks or structural borders using specialized tags. Currently, these are skipped, merging separate sections into a single paragraph flow.
++*   **The OpenXML mapping:**
++    *   **Page break tag:** `<w:br w:type="page"/>` or `<w:lastRenderedPageBreak/>`.
++    *   **Horizontal line separator:** `<w:pBdr><w:bottom w:val="single".../></w:pBdr>`.
++*   **The Solution:** Update `docxXmlToText` inside `DocumentParser.kt` to scan for these tags. When matched, append `\n\n---\n\n` in the output stream. This parses directly as a native `TextBlock.Divider` inside `TextReaderView`, rendering as a beautiful Material 3 `HorizontalDivider` line.
++
++#### B. Text Alignment Preservation (Center, Right, Justified)
++*   **The Issue:** Center-aligned quote blocks, right-aligned dates, or justified book chapters are all forced to align-left, stripping the original formatting context.
++*   **The OpenXML mapping:** Alignments are saved in paragraph properties: `<w:jc w:val="center"/>`, `<w:jc w:val="right"/>`, or `<w:jc w:val="both"/>` (Justified).
++*   **The Solution:**
++    1. Extract alignment tokens inside `docxXmlToText` and append HTML/Markdown-compatible alignment tags or annotate paragraph text blocks with formatting markers (e.g. `[align=center]`).
++    2. Map these inside `TextReaderView` to Compose typography layout parameters: `TextAlign.Center`, `TextAlign.End`, or `TextAlign.Justify`, keeping structural layouts intact.
++
++#### C. Styled Blockquotes & Margins
++*   **The Issue:** Citations or blockquotes render as standard text paragraphs, lacking indent styling.
++*   **The OpenXML mapping:** Indented quotes are saved in paragraph indents: `<w:ind w:left="720"/>` (where 720 represents twentieths of a point).
++*   **The Solution:** If the left indent value exceeds a specific threshold, format the parsed paragraph as a Markdown Blockquote (`> Quote text`). This triggers a styled vertical Gold bar, an italic font, and indent padding inside `TextReaderView`.
++
++---
++
++### 📖 2. E-Book (`EPUB` / `MOBI` / `HTML`) Structural Dividers
++
++*   **The Issue:** Authors use horizontal rule divider tags (`<hr/>`) to indicate a major time skip, scene shift, or perspective change in novels. These lines are completely stripped, causing scenes to crash into each other awkwardly.
++*   **The Solution:** 
++    *   Update `stripHtmlToMarkdown()` in `DocumentParser.kt` and `htmlToPlainText()` in `EpubParser.kt`.
++    *   Replace any `<hr[^>]*>` tag with a clear Markdown divider `\n\n---\n\n` instead of stripping it.
++    *   This instantly creates visual scene breaks throughout EPUBs, MOBIs, and HTML files!
++
++---
++
++## Part 2: Togglable HTML View (Preview vs. Source Code)
++
++Importing `.html` files is a common task for developers, web designers, and power users. Displaying *only* raw HTML source code is disappointing for reading articles, while displaying *only* stripped text is disappointing for viewing layouts.
++
++We will build a **Hybrid HTML Mode Switcher** that lets users toggle between **Preview Mode** and **Code Mode** on the fly.
++
++```
++       HTML Reader Toolbar Controls:
++  ┌──────────────────────────────────────────────┐
++  │ [←] title.html             [⚙]  [Mode: 🌐/💻] │  Toggle Button
++  └──────────────────────────────────────────────┘
++```
++
++---
++
++### 📱 1. User Interface Design (The Toggle Button)
++
++Add a visual toggle button inside `ReaderTopControls` (at the top-right toolbar of `ReaderScreen.kt`).
++*   **Visibility Condition:** The button **only** displays if the current file format is `BookFormat.HTML`.
++*   **Visual Icons:**
++    *   **Preview Mode active:** Displays a **`ic_view_list_24` (or terminal icon 💻)** representing "Switch to Source Code".
++    *   **Code Mode active:** Displays a **`ic_auto_stories_48` (or globe icon 🌐)** representing "Switch to Rendered Preview".
++
++---
++
++### ⚙️ 2. Architectural State & Event Pipeline
++
++To keep the application modular and maintain Clean Architecture, we will pass events through the ViewModel:
++
++```
++  ReaderScreen (User Taps Toggle)
++         │
++         v  [Emit Event]
++  ReaderEvent.ToggleHtmlViewMode
++         │
++         v  [ViewModel Updates State]
++  ReaderState (Swaps isHtmlPreviewMode: Boolean)
++         │
++         v  [Compose Recomposes UI]
++  TextReaderView (Displays Rendered Markdown OR Syntax-Highlighted Code)
++```
++
++#### A. ViewModel Events & State (`ReaderViewModel.kt`)
++*   **New State Parameter:** `isHtmlPreviewMode: Boolean = true` (persisted in DataStore or remembered per session).
++*   **New Event:** `ReaderEvent.ToggleHtmlViewMode`.
++*   **The Switcher Logic:**
++    *   When `ToggleHtmlViewMode` is received, toggle `isHtmlPreviewMode` on/off.
++    *   Update the `textContent` inside your state:
++        *   If `isHtmlPreviewMode` is **True**: Load the file, process it through `stripHtmlToMarkdown(htmlText)`, and set `renderFormat = BookFormat.MARKDOWN`.
++        *   If `isHtmlPreviewMode` is **False**: Load the file as raw UTF-8 string, and set `renderFormat = BookFormat.XML` (which triggers VS Code-style syntax highlighting).
++
++---
++
++### 🎨 3. Unified Reader View Swapping (`ReaderScreen.kt`)
++
++In your main screen body, route the rendering mode cleanly:
++
++```kotlin
++val renderFormat = when {
++    uiState.isEpub -> BookFormat.MARKDOWN
++    uiState.isDocument -> BookFormat.MARKDOWN
++    uiState.isHtml -> if (uiState.isHtmlPreviewMode) BookFormat.MARKDOWN else BookFormat.XML
++    else -> book.format
++}
++
++val renderingMode = when {
++    uiState.isHtml -> if (uiState.isHtmlPreviewMode) RenderingMode.MARKDOWN else RenderingMode.CODE
++    else -> book.format.renderingMode
++}
++```
++
++---
++
++## 📈 SSS+ IMPLEMENTATION IMPACT
++
++By building this hybrid pipeline, you solve two major design complaints simultaneously:
++
++1.  **DOCX/EPUB documents maintain their original visual rhythm:** Dividers represent page transitions, quote margins provide visual hierarchy, and paragraph alignment keeps layouts looking identical to their printed origins.
++2.  **HTML becomes a powerhouse format:** Developers can audit source code directly inside Luminar (with beautiful syntax highlighting and line numbers), then swap to rendered preview mode to read it like a fully-formatted article.
+diff --git a/docs/FUTURE_IMPROVEMENT_PLAN.md b/docs/FUTURE_IMPROVEMENT_PLAN.md
+new file mode 100644
+index 0000000..e971c4c
+--- /dev/null
++++ b/docs/FUTURE_IMPROVEMENT_PLAN.md
+@@ -0,0 +1,183 @@
++# Luminar Reader — Strategic Future Improvement Plan (v2.0 & Beyond)
++
++*Prepared on: July 14, 2026*
++*Target Milestone: Luminar Reader v2.0*
++*Focus: Deepening Offline-First AI, Accessibility, Synced Ecosystem, and SSS+ Engineering*
++
++---
++
++## Executive Summary
++
++Luminar Reader is already an outstanding, exceptionally well-architected Android e-reader. With clean MVVM architecture, Jetpack Compose, 30+ file formats with dedicated rendering modes, robust security limits, custom TTS profiles, and a gorgeous, responsive UI (SSS+ Spring animations and Glassmorphism), it stands ready to challenge established giants like Moon+ Reader Pro and ReadEra.
++
++To transition from an excellent independent utility to an **industry-defining powerhouse**, this plan charts the course for the next five development phases (**Phases H through L**). 
++
++Crucially, this plan respects Luminar's key values: **offline-first privacy, zero SDK bloat, no ads, no telemetry, and pure Kotlin/Java performance.**
++
++---
++
++## ROADMAP OVERVIEW: PHASES H–L
++
++```
++  ┌────────────────────────────────────────────────────────┐
++  │ PHASE H: Next-Gen Accessibility & RSVP Speed-Reading   │
++  └───────────────────────────┬────────────────────────────┘
++                              v
++  ┌────────────────────────────────────────────────────────┐
++  │ PHASE I: Zero-Server On-Device AI (Gemini Nano/Gemma)  │
++  └───────────────────────────┬────────────────────────────┘
++                              v
++  ┌────────────────────────────────────────────────────────┐
++  │ PHASE J: Offline Dictionary & Spaced-Repetition Cards  │
++  └───────────────────────────┬────────────────────────────┘
++                              v
++  ┌────────────────────────────────────────────────────────┐
++  │ PHASE K: Decentralized Sync & Open Annotation Exports  │
++  └───────────────────────────┬────────────────────────────┘
++                              v
++  ┌────────────────────────────────────────────────────────┐
++  │ PHASE L: Core Engine Polish & SQLite FTS5 Upgrade     │
++  └────────────────────────────────────────────────────────┘
++```
++
++---
++
++##  PHASE H: Next-Gen Accessibility & Speed-Reading (RSVP)
++*Focus: Elevating TTS to audiobook standard and unlocking ultra-high-speed reading.*
++
++### 1. Karaoke-Style Word-by-Word TTS Highlighting
++Currently, TTS reads text in chunks, but the user cannot visually track which word or sentence is active.
++*   **The Improvement:** Implement dynamic visual text highlighting (Karaoke-style) synced with the spoken voice.
++*   **How it works (Zero-Dependencies):**
++    *   Utilize Android's native `UtteranceProgressListener`.
++    *   Override `onRangeStart(utteranceId, start, end, frame)`. This callback provides the precise character range being spoken in real-time.
++    *   Map these character offsets back to the active Compose `AnnotatedString` in `TextReaderView`, applying a gold background/underline style to the spoken word, auto-scrolling the viewport if the reading position moves off-screen.
++
++### 2. RSVP (Rapid Serial Visual Presentation) Speed-Reading Mode
++Flashes words one-by-one in the center of the screen to eliminate eye movement, enabling reading speeds of 400–800 WPM.
++*   **The Improvement:** Add a "Speed Read" overlay to the Reader screen.
++*   **Design Details (Gold ORP):**
++    *   Find the **Optimal Recognition Point (ORP)** for each word (typically the center-left letter, e.g., the 3rd letter of an 8-letter word).
++    *   Render the word in monospace font, coloring the ORP character in gold (`#FFD700`) and the rest in standard reader text color. This anchors the user's focus.
++    *   Provide controls for starting, pausing, rewinding, and adjusting WPM dynamically.
++
++### 3. Whisper-Quiet Hands-Free Voice Controls
++*   **The Improvement:** Let users navigate pages, bookmark, or pause reading entirely via short voice commands when they are reading in hands-free mode (e.g., cooking or working out).
++*   **Technical Implementation:** Integrate Android's local `SpeechRecognizer` to listen for micro-phrases like *"Luminar, next"* or *"Luminar, pause"* when voice controls are enabled, bypassing external APIs entirely.
++
++---
++
++## PHASE I: Zero-Server On-Device AI (Gemini Nano & Local Embeddings)
++*Focus: Replacing the LAN-dependent Ollama scaffold with true local AI.*
++
++### 1. Transitioning to Google AI Edge SDK (Gemini Nano / Gemma)
++Luminar's current network package contains an empty `OllamaApiService` and background worker. Because running Ollama on Android requires technical workarounds (e.g., Termux) or an active local LAN server, this is a barrier for general users.
++*   **The Improvement:** Use Google's **AI Edge SDK** to run **Gemini Nano** or **Gemma-2B** directly on modern Android devices (Google Pixel 8+, Snapdragon 8 Gen 3, etc.).
++*   **The Benefit:** 100% offline, lightning-fast, zero cloud costs, and perfectly matches Luminar's privacy-first core philosophy.
++
++### 2. On-Device Semantic Search (Local Vector Indexing)
++*   **The Improvement:** Search the book not just for exact keyword matching, but by *conceptual meaning* (e.g., searching for "sadness" highlights paragraphs containing "grief", "tears", and "melancholy").
++*   **How to Build:**
++    *   Use a lightweight local embedding model via TensorFlow Lite.
++    *   Index paragraphs/chapters into small floating-point arrays.
++    *   Map the embeddings to the Room database utilizing an indexing model, allowing users to query concepts instantly offline.
++
++### 3. Dynamic "AI Book Club" Co-Pilot
++Instead of just static background analysis, create a conversational assistant inside the book drawer.
++*   **Features:**
++    *   **Contextual Ask-AI:** Highlight any complex sentence/paragraph and select "Ask AI" from the context menu to explain it, simplify it, or translate it.
++    *   **AI Character / Concept Tracker:** For dense fantasy novels or technical docs, the AI tracks recurring character names or terms and lists details dynamically.
++    *   **AI Study Buddy (for PDF/Docs):** Generate 5-question multi-choice quizzes based on the chapter the user just read, checking comprehension directly inside the app.
++
++---
++
++## PHASE J: Offline Dictionary & Spaced-Repetition Vocabulary Builder
++*Focus: Eliminating internet dependencies for word lookups and adding active learning features.*
++
++### 1. Pure-Offline Dictionary Parsing (StarDict / MDict / Custom SQLite)
++Currently, dictionary search requires `dictionaryapi.dev`. If a user is on an airplane, in the subway, or has disabled Wi-Fi to read undistracted, dictionary lookup fails.
++*   **The Improvement:** Integrate a highly compressed, pre-packaged offline SQLite dictionary database or support standard StarDict/MDict catalog file imports.
++*   **How it works:**
++    *   Offer a lightweight (5-10MB) offline English dictionary database as an optional, lazy-loaded local download.
++    *   Parse the database in Room to fetch words instantly on double-tap word selection.
++
++### 2. Spaced-Repetition Vocabulary Builder (Luminar Cards)
++*   **The Improvement:** Turn reading into active vocabulary building.
++*   **How to Build:**
++    *   When a user looks up a word, add a small "+" button to add it to their "Vocabulary List."
++    *   Create a simple flashcard review tab in the Library screen based on **SuperMemo-2 (SM2) spaced repetition physics** (the algorithm behind Anki).
++    *   Prompt the user daily with 5-10 cards they need to review, improving retention and making Luminar a vital tool for language learners and professionals.
++
++---
++
++## PHASE K: Decentralized Sync & Open Standards
++*Focus: Resolving the #1 industry-wide pain point—cross-device sync—without proprietary servers.*
++
++### 1. Cloud-Agnostic Nextcloud, WebDAV, Drive, and Dropbox Sync
++Users do not trust proprietary reader clouds, and they hate subscriptions.
++*   **The Improvement:** Build an encrypted, decentralized sync service.
++*   **The Solution:**
++    *   Write a unified backup coordinator that exports a lightweight, highly compressed sync file (`luminar_sync.json.gz`).
++    *   Let the user connect their own storage provider: **Google Drive**, **Dropbox**, or **any WebDAV provider** (Nextcloud, Synology NAS, pCloud).
++    *   Sync reading progress, bookmarks, highlights, and custom tags securely without building or hosting a custom server.
++
++### 2. Peer-to-Peer local Wi-Fi Sharing (NearShare)
++*   **The Improvement:** Send books, annotations, and reading progress directly from phone to tablet or friend without using cellular data or the internet.
++*   **How to Build:**
++    *   Utilize Android's **Network Service Discovery (NSD)** and a lightweight local Ktor server.
++    *   When both devices open "Luminar Share" on the same network, they discover each other instantly. Tap to transfer files securely peer-to-peer.
++
++### 3. Open Annotation Standards (Obsidian, Notion, Readwise)
++*   **The Improvement:** Enable users to export their book annotations in clean, beautifully formatted Markdown files structured specifically for obsidian links or database schemas.
++*   **Features:**
++    *   **Obsidian / Logseq Export:** Export notes with YAML headers, blockquotes, page links, and chronological dates.
++    *   **Readwise API Integration:** Add an API connection in Settings to auto-sync highlighted passages to Readwise.
++
++---
++
++## PHASE L: Core Engine Refinement & SQLite FTS5 Upgrade
++*Focus: Maximizing parser speeds, rendering accuracy, and database search rankings.*
++
++### 1. Room FTS4 to FTS5 Database Migration
++Currently, Luminar uses FTS4 to guarantee compatibilities with old APIs. 
++*   **The Refinement:** Safely upgrade Room's full-text search virtual tables to **FTS5**.
++*   **Why it is safe:** Android 5.0+ (API 21+) supports FTS5. Since Luminar’s minimum supported SDK is 26, FTS5 is natively available on **100%** of your active user devices.
++*   **The Huge Advantages:**
++    *   **Relevance Scoring (BM25):** FTS5 supports the BM25 probabilistic relevance algorithm natively. Book search results can be sorted with the most highly matching, relevant passages first, rather than raw sequential order.
++    *   **Triggers & Optimization:** Substantially cleaner tokenizers and lower storage overhead.
++
++### 2. CSS-Aware EPUB Rendering Enhancements
++The custom `EpubParser` strips HTML/CSS to flatten files into Markdown text streams. While excellent for performance, it strips formatting such as drop-caps, text alignment (centered poetry, right-aligned signatures), and styled quote blocks.
++*   **The Refinement:** Enhance `EpubParser` to parse basic CSS parameters during XML streaming:
++    *   Map `text-align: center` → Compose `TextAlign.Center`.
++    *   Map drop-caps, custom indent margins, and block background highlights into a nested styled block model instead of a raw flat text stream.
++
++### 3. Non-Blocking Multithreaded Import (WorkManager Pre-measure)
++Currently, massive imports or unzipping large EPUBs can cause momentary frames to drop on the UI thread.
++*   **The Refinement:**
++    *   Offload all metadata extraction, cover generation, and text tokenization to specialized background threads orchestrated via **WorkManager**.
++    *   **Pre-heating Layouts:** Pre-render and pre-measure text boundary offsets in a background coroutine before the user opens the book. When they tap a card, the view displays the content in **less than 50 milliseconds**, bypassing the layout pass.
++
++---
++
++## MARKETING & LAUNCH POSITIONING
++
++Luminar’s value proposition is incredibly strong. To stand out on the Google Play Store, emphasize these exact "moats":
++
++1.  **"30 Apps in One":** Compare standard readers (supporting ~10 formats) with Luminar's 30+ support. Emphasize that it is the *only* e-reader that natively formats Code (.kt, .py), Spreadsheets (.xlsx, .csv), Presentations (.pptx), Comics (.cbz), and E-books (.epub) differently.
++2.  **"Your Data is Yours":** Emphasize: *No account registration, no analytics, no external servers, open-source-friendly Markdown annotation exports.*
++3.  **"Pay Once, Own Forever":** Attack the monthly subscription fatigue. Position Luminar's $4.99 premium tier as an investment that will never badger users with upsells.
++
++---
++
++## EXECUTION ORDER RECOMMENDATION
++
++For maximum impact and development ease, execute the enhancements in this chronological order:
++
++| Step | Enhancement | Effort | Impact | Differentiator |
++|---|---|---|---|---|
++| **1** | **FTS4 to FTS5 Migration** | Low | High | Instant BM25 search ranking results |
++| **2** | **TTS Karaoke Sync** | Medium | High | Makes voice reading feel premium |
++| **3** | **Offline Dictionary (SQLite)** | Medium | High | Fixes the #1 offline reading pain point |
++| **4** | **Decentralized Sync (WebDAV/Drive)** | High | Critical | Solves multi-device usage completely |
++| **5** | **On-Device LLM (Gemini Nano)** | High | Extremely High | Futuristic AI integration, 100% private |
+diff --git a/docs/READING_ENGINE_BIRTH_DEFECTS_AUDIT.md b/docs/READING_ENGINE_BIRTH_DEFECTS_AUDIT.md
+new file mode 100644
+index 0000000..4ae44dc
+--- /dev/null
++++ b/docs/READING_ENGINE_BIRTH_DEFECTS_AUDIT.md
+@@ -0,0 +1,126 @@
++# Luminar Reader — Reading Engine & Document Parser Audit ("Birth Defects" Scan)
++
++*Conducted on: July 14, 2026*
++*Target: Transitioning the core document parser (DocumentParser.kt) from prototype hacks to robust SSS+ engineering*
++
++---
++
++## Executive Summary
++
++A deep code-level scan of the reading engine (`DocumentParser.kt`, `EpubParser.kt`, and `TextReaderView.kt`) reveals why the reader currently feels unstable or "buggy." 
++
++To maintain the "zero external binary dependencies" rule, the engine utilizes custom Regular Expressions to parse complex XML document formats (`DOCX`, `XLSX`, `PPTX`, `FB2`, `XPS`). While creative, parsing relational XML structures with linear regex is highly fragile.
++
++The scan has isolated **five critical "birth defects"** in the parsing engine. These cause severe multilingual rendering crashes, completely break PPTX slide extraction, swallow HTML files into raw source tag logs, and dump binary garbage for compressed help files (`CHM`).
++
++Resolving these issues is the single most important step to achieving an **SSS+ Reading Experience**.
++
++---
++
++## 🚨 THE 5 ENGINE BIRTH DEFECTS
++
++### 1. The Multilingual Silent Failure in Office Docs (`DOCX`, `XLSX`, `PPTX`, `XPS`)
++*   **Where it lives:** `DocumentParser.kt` (`decodeXmlEntities` vs `decodeHtmlEntities`)
++*   **The Bug:** 
++    Your Office doc parsers pass text runs through `decodeXmlEntities(text)`. However, `decodeXmlEntities` **does not support decimal or hexadecimal numeric XML entities**:
++    ```kotlin
++    private fun decodeXmlEntities(text: String): String {
++        return text
++            .replace("&lt;", "<")
++            .replace("&gt;", ">")
++            .replace("&quot;", "\"")
++            .replace("&apos;", "'")
++            .replace("&#39;", "'")
++            .replace("&amp;", "&") // MUST be last
++    }
++    ```
++*   **Why it is catastrophic:** 
++    Microsoft Office applications frequently encode non-ASCII characters—including Chinese, Japanese, Arabic, Cyrillic, math symbols, curly quotes (`&#x201c;`/`&#x201d;`), and em-dashes—as decimal (`&#20013;`) or hexadecimal (`&#x4e2d;`) entities.
++    Because your decoder completely ignores these, **non-English documents and technical papers will render as an ugly, unreadable soup of raw codes (e.g. `&#20013;&#22269;`).**
++*   **The Plan to Fix (SSS+):** 
++    Swap out `decodeXmlEntities` entirely. Force DOCX, XLSX, and PPTX parsers to use `decodeHtmlEntities` (which already has robust regex handlers for numeric and hex unicode decoding).
++
++---
++
++### 2. Pure HTML Page Import Displays Raw Source Code
++*   **Where it lives:** `BookFormat.kt` (extension mapping) & `TextReaderView.kt` (`parseTextBlocks`)
++*   **The Bug:** 
++    Luminar successfully imports `.html` or `.htm` files as `BookFormat.HTML`. However, in `TextReaderView.kt`'s `parseTextBlocks()`, HTML is not included in the `isCode` flag. It falls through to the plain text paragraph line-splitter:
++    ```kotlin
++    val isCode = format == BookFormat.CODE || format == BookFormat.JSON || format == BookFormat.XML
++    // HTML is skipped, falls to else plain-text parser!
++    ```
++*   **Why it is catastrophic:** 
++    The reader does not parse the HTML structure. It displays the **raw, unformatted source HTML code** (complete with `<html>`, `<head>`, `<style>`, `<div class="...">`, `<script>`, etc.) directly to the user as plain text paragraphs.
++*   **The Plan to Fix (SSS+):** 
++    1. Inside `DocumentParser.kt`'s `parseToTextUnsafe`, intercept the html extension:
++       ```kotlin
++       "html", "htm", "xhtml" -> stripHtmlToMarkdown(file.readText(Charsets.UTF_8))
++       ```
++    2. Your existing `stripHtmlToMarkdown` method is highly robust. By routing HTML through it on import, HTML files will instantly display as clean, structured, and beautiful Markdown paragraphs in `TextReaderView`!
++
++---
++
++### 3. PPTX Slides Swallow Spaced/Preserved Paragraphs Entirely
++*   **Where it lives:** `DocumentParser.kt` (around line 396)
++*   **The Bug:** 
++    PowerPoint slide text runs are extracted using this strict regex:
++    ```kotlin
++    val textRegex = Regex("<a:t>(.*?)</a:t>", RegexOption.DOT_MATCHES_ALL)
++    ```
++    In the Microsoft OpenXML specification, PowerPoint slides frequently save text runs with whitespace preservation attributes, rendering the tag as `<a:t xml:space="preserve">text</a:t>` whenever leading or trailing spaces are involved.
++*   **Why it is catastrophic:** 
++    Because your regex requires *exactly* `<a:t>` with no attributes, **any slide text utilizing space preservation fails to match and is silently swallowed.** The user will open their presentation and find entire slides or major text blocks completely missing.
++*   **The Plan to Fix (SSS+):** 
++    Align the PPTX regex with the robust pattern you already use in your DOCX parser. Upgrade `textRegex` to allow wildcard namespaces and attributes:
++    ```kotlin
++    val textRegex = Regex("<a:t[^>]*>([\\s\\S]*?)</a:t>", RegexOption.DOT_MATCHES_ALL)
++    ```
++
++---
++
++### 4. The Illusion of CHM Help File Parsing (Garbled Binary Matches)
++*   **Where it lives:** `DocumentParser.kt` (around line 850)
++*   **The Bug:** 
++    Microsoft's Compiled HTML Help (`CHM`) format is actually a complex, multi-directory binary filesystem database (ITSS format).
++    To parse it without external native libraries, your code reads the raw binary CHM file as an ISO_8859_1 String and runs a plain-text regex on it:
++    ```kotlin
++    val text = String(bytes, Charsets.ISO_8859_1)
++    val bodyRegex = Regex("<body[^>]*>([\\s\\S]*?)</body>", RegexOption.IGNORE_CASE)
++    ```
++*   **Why it is catastrophic:** 
++    Real-world CHM files compress their embedded HTML files using the proprietary Microsoft LZX algorithm. Running a plain-text regex directly over raw, LZX-scrambled binary bytes **matches absolutely nothing**.
++    The parser will either fail silently, return a blank screen, or fall back to dumping garbled, non-printable binary strings (`extractTextFromBinary`), making the text look like scrambled cipher garbage.
++*   **The Plan to Fix (SSS+):** 
++    Since writing a complete LZX/ITSS decompressor in pure Kotlin is extremely heavy, protect your launch:
++    *   Intercept `.chm` imports with a clean "Best-Effort decompressor" system warning dialog.
++    *   Advise the user that CHM is a legacy, proprietary Windows format and provide a highly useful step-by-step tip on how to convert CHM → EPUB/PDF using [Calibre] directly before reading.
++
++---
++
++### 5. Multilingual Localized Headings Ignored in Word Documents (`DOCX`)
++*   **Where it lives:** `DocumentParser.kt` (around line 23)
++*   **The Bug:** 
++    Word headings are detected using this strict regex:
++    ```kotlin
++    val HEADING_STYLE = Regex("""<w:pStyle\s+w:val="Heading(\d)"""")
++    ```
++*   **Why it is catastrophic:** 
++    Word Heading style names are localized by Microsoft Word based on the document creator's system language. In French Word, headings are saved as `w:val="Titre1"`; in German, they are saved as `w:val="Überschrift1"`.
++    Because your regex expects the exact English word `"Heading"`, **any Word document created on a non-English machine loses all heading sizes and renders them as standard paragraphs**, destroying document readability.
++*   **The Plan to Fix (SSS+):** 
++    Map Word paragraph heading styles by cross-referencing heading level properties (`w:outlineLvl`) instead of relying on the localized style name string, ensuring 100% accurate document structures regardless of language.
++
++---
++
++## 🛠️ THE SSS+ ENGINE ACTION MATRIX
++
++To take your reading engine from a "prototype feeling" to a bulletproof, commercial-grade product, execute these non-coding structural changes in your next dev pass:
++
++| Priority | Birth Defect | Complexity | User Impact | Fix Difficulty |
++|---|---|---|---|---|
++| **1** | **Office Multilingual Entities (Bug 1)** | Low | High | **Extremely Easy** (Swap `decodeXmlEntities` to `decodeHtmlEntities`) |
++| **2** | **HTML Raw Source Clutter (Bug 2)** | Low | High | **Easy** (Route `.html` imports through `stripHtmlToMarkdown`) |
++| **3** | **PPTX Swallowed Paragraphs (Bug 3)** | Low | High | **Extremely Easy** (Upgrade `<a:t>` regex to `<a:t[^>]*>`) |
++| **4** | **DOCX Non-English Headings (Bug 5)** | Medium | Medium | **Medium** (Match `w:outlineLvl` tag instead of localized title) |
++| **5** | **CHM Compression Block (Bug 4)** | High | Medium | **Easy** (Add conversion guidance dialog on import) |
+diff --git a/docs/UI_UX_IRREGULARITIES_AUDIT.md b/docs/UI_UX_IRREGULARITIES_AUDIT.md
+new file mode 100644
+index 0000000..59bbc5c
+--- /dev/null
++++ b/docs/UI_UX_IRREGULARITIES_AUDIT.md
+@@ -0,0 +1,117 @@
++# Luminar Reader — UI/UX Irregularities & Performance Audit
++
++*Conducted on: July 14, 2026*
++*Target: Resolution of hidden visual, functional, and performance anomalies before release*
++
++---
++
++## Executive Summary
++
++While Luminar Reader has a highly premium feature list and follows Clean Architecture, a deep code-level audit of your presentation layer reveals **six major irregularities**. These anomalies currently block core features from working, cause visual clashes in Light Mode, and trigger severe UI stuttering (jank) in comic reading.
++
++Addressing these issues is critical to ensure that your first public testers experience a fluid, high-fidelity app rather than a "broken prototype."
++
++This audit isolates each issue, shows the exact file/lines where they live, and provides a clear, zero-coding **action plan** to resolve them.
++
++---
++
++## 🚨 THE 6 CRITICAL IRREGULARITIES
++
++### 1. The Table of Contents is Visually complete but Fully Non-Functional
++*   **The Code:** `ReaderScreen.kt` (around line 614)
++*   **The Issue:** 
++    ```kotlin
++    onClick = {
++        showToc = false
++        // TODO: Jump to chapter block index
++        onInteraction()
++    }
++    ```
++    The Table of Contents dropdown displays beautiful chapter titles, but clicking any of them does absolutely nothing. The click simply closes the drawer.
++*   **Why it hurts UX:** Users opening an EPUB or document expect to jump directly to a chapter. Tapping a chapter and having nothing happen makes the app feel completely broken.
++*   **The Plan to Fix:**
++    1. Define a `ReaderEvent.GoToChapter(chapterIndex: Int)` event in `ReaderViewModel.kt`.
++    2. When clicked, have the ViewModel search your parsed `blockTexts` for the level-1 Markdown header (`# Chapter Title`) matching that chapter.
++    3. Update the `scrollToBlockIndex` state. This will trigger the Compose `LaunchedEffect(scrollToBlockIndex)` inside `TextReaderView.kt` which animates the scroll directly to that block.
++
++---
++
++### 2. Main-Thread Synchronous Image Decoding in Comic Mode (Severe Paging Jank)
++*   **The Code:** `ComicReaderView.kt` (around line 98)
++*   **The Issue:** 
++    ```kotlin
++    val bitmap = remember(comicFile.absolutePath, entryPath) {
++        runCatching {
++            val bytes = getImageBytes(comicFile, entryPath)
++            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
++        }.getOrNull()
++    }
++    ```
++    `getImageBytes` is a synchronous file system ZIP-extraction call. This, along with `BitmapFactory.decodeByteArray`, is executed **synchronously on the Main Thread (UI Thread)** inside a Compose `remember` block.
++*   **Why it hurts UX:** Unzipping and decoding high-resolution JPEGs can take 150ms–300ms. Running this on the main thread freezes the UI during swipes, creating severe lag and dropping frames.
++*   **The Plan to Fix:**
++    1. Shift image loading and bitmap decoding into a background coroutine using `produceState` or a `LaunchedEffect`.
++    2. Display a sub-loading shimmer for the single card while decoding, keeping the main `HorizontalPager` container buttery-smooth (60–120 FPS).
++    3. Implement a simple 3-page bitmap cache (Current, Previous, Next) and recycle off-screen bitmaps to prevent memory spikes.
++
++---
++
++### 3. Dead Progress Bar & Locked Chapter Label in Text Reader (EPUB, TXT, DOCX, Code)
++*   **The Code:** `ReaderScreen.kt:356`, `ReaderViewModel.kt:642`
++*   **The Issue:** 
++    The gold Kindle-style `ReadingProgressBar` at the bottom of the screen relies on `uiState.currentPage` and `uiState.totalPages`. However, as the user scrolls through any text-based format, `onScrollPositionChanged(position)` only updates `scrollPosition`. It **never recalculates the current page or active chapter index.**
++*   **Why it hurts UX:** 
++    *   The reading progress bar stays locked at `0%` forever during scroll.
++    *   The reader title bar displays "Ch. 1 of 12" even if the user scrolls all the way to the end of the book.
++*   **The Plan to Fix:**
++    1. Since text-based files are split into parsed text blocks, the ViewModel should calculate chapter boundaries by scanning blocks for `# Chapter Title` markers.
++    2. When `onScrollPositionChanged(firstVisibleBlockIndex)` is triggered, the ViewModel must check which chapter boundary range the block falls into.
++    3. Automatically update `uiState.currentPage` and `uiState.currentChapterIndex` to the correct scrolling values, bringing the progress bar and chapter indicators to life.
++
++---
++
++### 4. Eviction of Text-To-Speech (TTS) During Background Multitasking
++*   **The Code:** `TtsController.kt`
++*   **The Issue:** 
++    `TtsController` is a singleton utilizing the Android application context, but it has no connection to an Android `Foreground Service` or `MediaSession`.
++*   **Why it hurts UX:** If a user locks their screen or switches apps to multitask while listening to a book, the Android OS will quickly flag the application process as inactive and evict it from memory, abruptly stopping the spoken audio.
++*   **The Plan to Fix:**
++    1. Bind `TtsController` actions to a background-running Android `Foreground Service` (`TtsService`).
++    2. Render a system notification with media controls (Play, Pause, Skip, Stop). This guarantees background audio play and lets users control playback from the lock screen.
++
++---
++
++### 5. Jarring Visual Clash of Cover Placeholders in Light Theme
++*   **The Code:** `LibraryScreen.kt` (around lines 1100–1110)
++*   **The Issue:** 
++    Books without an embedded cover image utilize `CoverPlaceholder`, which features a hardcoded dark-gold and near-black gradient background (`Color(0xFF111111)`, `Color(0xFF3B3014)`).
++*   **Why it hurts UX:** While this looks highly premium in AMOLED Dark Mode, when the user switches to Light Theme, these massive near-black rectangles create a jarring, visually aggressive smear in the middle of a clean, light grid.
++*   **The Plan to Fix:**
++    1. Make `CoverPlaceholder` theme-aware.
++    2. In Light Mode, swap the near-black background for a warm, light gold-tinted paper background, soft gray gradients, and charcoal-colored lettering, maintaining cohesive lightness.
++
++---
++
++### 6. Missing Pinch-To-Zoom and Double-Tap Gestures in PDF Reader
++*   **The Code:** `ReaderScreen.kt` (around lines 368–375, `PdfReaderView`)
++*   **The Issue:** 
++    Your custom PDF viewer uses `mhiew` Android PDF Viewer wrapped in a Compose `AndroidView`, but it does not enable or handle pinch-to-zoom or double-tap zoom scales in its native configuration block.
++*   **Why it hurts UX:** Reading technical manuals, schematics, or multi-column PDFs is impossible if users cannot zoom in to inspect tiny fonts or figures.
++*   **The Plan to Fix:**
++    1. Configure `.enableDoubletap(true)` and `.enableAntialiasing(true)` inside the `PDFView` builder chain in `PdfReaderView`.
++    2. Enable standard swipe navigation and bind scroll gestures to provide a highly interactive PDF reading experience.
++
++---
++
++## 🛠️ RECOMMENDED RESOLUTION ORDER
++
++By fixing these irregularities, you'll eliminate the elements that make the app feel like a "work-in-progress" and deliver a flawless, commercial-grade product.
++
++| Priority | Issue | Complexity | Impact |
++|---|---|---|---|
++| 1 | **TOC Chapter Jumping (Issue 1)** | Low | High (Fixes broken navigation) |
++| 2 | **Active Scroll Progress & Chapter Update (Issue 3)** | Medium | Critical (Animates bottom bar & headers) |
++| 3 | **Background Async Comic Decoding (Issue 2)** | Medium | Huge (Removes layout freeze/jank entirely) |
++| 4 | **Theme-Aware Cover Placeholders (Issue 5)** | Low | High (Preserves light mode beauty) |
++| 5 | **PDF Pinch-to-Zoom (Issue 6)** | Low | Medium (Essential utility) |
++| 6 | **TTS Foreground Service (Issue 4)** | High | High (Premium background audio) |
+diff --git a/luminar_improvements.patch b/luminar_improvements.patch
+new file mode 100644
+index 0000000..a6830a8
+--- /dev/null
++++ b/luminar_improvements.patch
+@@ -0,0 +1,1739 @@
++diff --git a/app/build.gradle.kts b/app/build.gradle.kts
++index 9b195b9..12247f8 100644
++--- a/app/build.gradle.kts
+++++ b/app/build.gradle.kts
++@@ -15,8 +15,8 @@ android {
++         applicationId = "com.luminar.reader"
++         minSdk = 26
++         targetSdk = 35
++-        versionCode = 1
++-        versionName = "1.0.0"
+++        versionCode = 2
+++        versionName = "2.0.0"
++         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
++     }
++ 
++diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
++index 15ba634..664839a 100644
++--- a/app/src/main/AndroidManifest.xml
+++++ b/app/src/main/AndroidManifest.xml
++@@ -1,6 +1,8 @@
++ <manifest xmlns:android="http://schemas.android.com/apk/res/android">
++ 
++     <uses-permission android:name="android.permission.INTERNET" />
+++    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+++    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
++ 
++     <application
++         android:name=".LuminarApp"
++@@ -56,14 +58,14 @@
++ 
++         <activity
++             android:name=".CrashViewActivity"
++-            android:exported="true"
+++            android:exported="false"
++             android:label="Luminar Crash Log"
++-            android:theme="@android:style/Theme.Material.Light.NoActionBar">
++-            <intent-filter>
++-                <action android:name="android.intent.action.MAIN" />
++-                <category android:name="android.intent.category.LAUNCHER" />
++-            </intent-filter>
++-        </activity>
+++            android:theme="@android:style/Theme.Material.Light.NoActionBar" />
+++
+++        <service
+++            android:name=".presentation.reader.TtsService"
+++            android:foregroundServiceType="mediaPlayback"
+++            android:exported="false" />
++ 
++     </application>
++ 
++diff --git a/app/src/main/java/com/luminar/reader/data/document/DocumentParser.kt b/app/src/main/java/com/luminar/reader/data/document/DocumentParser.kt
++index 09d0133..cf27e69 100644
++--- a/app/src/main/java/com/luminar/reader/data/document/DocumentParser.kt
+++++ b/app/src/main/java/com/luminar/reader/data/document/DocumentParser.kt
++@@ -95,6 +95,7 @@ class DocumentParser @Inject constructor() {
++             "cbr" -> "# CBR Comic Book\n\nThis file uses RAR compression which requires a proprietary library.\n\n**How to read it:**\n1. Rename the file from `.cbr` to `.rar`\n2. Extract it with a RAR tool\n3. Re-compress the folder as `.zip`\n4. Rename the `.zip` to `.cbz`\n5. Import the `.cbz` file into Luminar\n\nAlternatively, use [Calibre](https://calibre-ebook.com) to convert CBR → CBZ."
++             "cbt" -> "# CBT Comic Book\n\nThis file uses TAR archiving.\n\n**How to read it:**\n1. Extract the `.cbt` file using a TAR tool\n2. Re-compress the images folder as `.zip`\n3. Rename the `.zip` to `.cbz`\n4. Import the `.cbz` file into Luminar"
++             "djvu", "djv" -> "# DjVu Document\n\nDjVu is a specialized image-based format that requires a native rendering library.\n\n**How to read it:**\n- Convert to PDF using an online DjVu-to-PDF converter\n- Or use [DjView](https://djvu.sourceforge.net) on desktop\n- Then import the PDF into Luminar"
+++            "html", "htm", "xhtml" -> stripHtmlToMarkdown(file.readText(Charsets.UTF_8))
++             else -> file.readText(Charsets.UTF_8)
++         }
++     }
++@@ -166,9 +167,20 @@ class DocumentParser @Inject constructor() {
++         for (pMatch in PARAGRAPH.findAll(processedXml)) {
++             val paragraph = pMatch.value
++ 
++-            // Check for heading style
++-            val headingLevel = HEADING_STYLE
++-                .find(paragraph)?.groupValues?.get(1)?.toIntOrNull()
+++            val hasPageBreak = paragraph.contains("<w:br w:type=\"page\"") ||
+++                paragraph.contains("<w:lastRenderedPageBreak")
+++            val hasBorder = paragraph.contains("<w:pBdr>")
+++
+++            if (hasPageBreak || hasBorder) {
+++                if (sb.isNotEmpty()) {
+++                    sb.appendLine("---")
+++                    sb.appendLine()
+++                }
+++            }
+++
+++            // Check for heading style (by localized name or outline level)
+++            val headingLevel = HEADING_STYLE.find(paragraph)?.groupValues?.get(1)?.toIntOrNull()
+++                ?: Regex("""<w:outlineLvl\s+w:val="(\d)"""").find(paragraph)?.groupValues?.get(1)?.toIntOrNull()?.plus(1)
++ 
++             // Check for list (numbered or bullet)
++             val isListItem = paragraph.contains("<w:numPr")
++@@ -998,6 +1010,7 @@ class DocumentParser @Inject constructor() {
++         }
++ 
++         text = BR_TAG.replace(text, "\n")
+++        text = text.replace(Regex("<hr[^>]*>", RegexOption.IGNORE_CASE), "\n\n---\n\n")
++         text = CLOSE_P.replace(text, "\n\n")
++         text = CLOSE_DIV.replace(text, "\n")
++         text = LI_OPEN.replace(text, "\n- ")
++@@ -1019,13 +1032,7 @@ class DocumentParser @Inject constructor() {
++      * MUST decode &amp; LAST to avoid double-decoding (e.g. &amp;lt; → &lt; → <).
++      */
++     private fun decodeXmlEntities(text: String): String {
++-        return text
++-            .replace("&lt;", "<")
++-            .replace("&gt;", ">")
++-            .replace("&quot;", "\"")
++-            .replace("&apos;", "'")
++-            .replace("&#39;", "'")
++-            .replace("&amp;", "&") // MUST be last
+++        return decodeHtmlEntities(text)
++     }
++ 
++     private fun decodeHtmlEntities(text: String): String {
++diff --git a/app/src/main/java/com/luminar/reader/data/epub/EpubParser.kt b/app/src/main/java/com/luminar/reader/data/epub/EpubParser.kt
++index af8e3a7..5209fc3 100644
++--- a/app/src/main/java/com/luminar/reader/data/epub/EpubParser.kt
+++++ b/app/src/main/java/com/luminar/reader/data/epub/EpubParser.kt
++@@ -188,6 +188,7 @@ class EpubParser @Inject constructor() {
++         var text = html
++         text = HEAD_BLOCK.replace(text, "")
++         text = BR_TAG.replace(text, "\n")
+++        text = text.replace(Regex("<hr[^>]*>", RegexOption.IGNORE_CASE), "\n\n---\n\n")
++         text = CLOSE_P.replace(text, "\n\n")
++         text = CLOSE_DIV.replace(text, "\n")
++         text = CLOSE_LI.replace(text, "\n")
++diff --git a/app/src/main/java/com/luminar/reader/presentation/library/LibraryScreen.kt b/app/src/main/java/com/luminar/reader/presentation/library/LibraryScreen.kt
++index f71852e..19af6d3 100644
++--- a/app/src/main/java/com/luminar/reader/presentation/library/LibraryScreen.kt
+++++ b/app/src/main/java/com/luminar/reader/presentation/library/LibraryScreen.kt
++@@ -204,11 +204,20 @@ fun LibraryScreen(
++                             onQueryChanged = { viewModel.onEvent(LibraryEvent.UpdateSearchQuery(it)) }
++                         )
++                     } else {
+++                        val greeting = remember {
+++                            val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+++                            when (hour) {
+++                                in 5..11 -> "Good morning, Zarrar 🌅"
+++                                in 12..17 -> "Good afternoon, Zarrar ☕"
+++                                in 18..22 -> "Good evening, Zarrar 🌌"
+++                                else -> "Happy reading, Zarrar ✨"
+++                            }
+++                        }
++                         Text(
++-                            text = "Luminar",
+++                            text = greeting,
++                             fontFamily = LuminarTitleFont,
++                             fontWeight = FontWeight.Bold,
++-                            style = MaterialTheme.typography.headlineMedium,
+++                            style = MaterialTheme.typography.titleLarge,
++                             color = MaterialTheme.colorScheme.onBackground
++                         )
++                     }
++@@ -548,106 +557,112 @@ private fun LibraryBottomBar(
++     onImport: () -> Unit,
++     onShowStats: () -> Unit
++ ) {
++-    Column {
++-        // Subtle glass-effect divider
++-        HorizontalDivider(
++-            color = LuminarGold.copy(alpha = 0.08f),
++-            thickness = 0.5.dp
++-        )
+++    Box(
+++        modifier = Modifier
+++            .fillMaxWidth()
+++            .navigationBarsPadding()
+++            .padding(horizontal = 16.dp, vertical = 12.dp),
+++        contentAlignment = Alignment.Center
+++    ) {
++         Surface(
+++            modifier = Modifier.fillMaxWidth(),
++             color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
++-            tonalElevation = 2.dp
++-        ) {
++-        Row(
++-            modifier = Modifier
++-                .fillMaxWidth()
++-                .navigationBarsPadding()
++-                .padding(horizontal = 8.dp, vertical = 6.dp),
++-            horizontalArrangement = Arrangement.SpaceEvenly,
++-            verticalAlignment = Alignment.CenterVertically
+++            shape = RoundedCornerShape(28.dp),
+++            border = androidx.compose.foundation.BorderStroke(
+++                0.5.dp,
+++                LuminarGold.copy(alpha = 0.15f)
+++            ),
+++            tonalElevation = 4.dp
++         ) {
++-            // Search
++-            BottomBarItem(
++-                icon = {
++-                    Icon(
++-                        painter = painterResource(
++-                            if (uiState.isSearchActive) R.drawable.ic_close_24
++-                            else R.drawable.ic_search_24
++-                        ),
++-                        contentDescription = "Search",
++-                        modifier = Modifier.size(22.dp)
++-                    )
++-                },
++-                label = if (uiState.isSearchActive) "Close" else "Search",
++-                isActive = uiState.isSearchActive,
++-                onClick = onToggleSearch
++-            )
+++            Row(
+++                modifier = Modifier
+++                    .fillMaxWidth()
+++                    .padding(horizontal = 8.dp, vertical = 8.dp),
+++                horizontalArrangement = Arrangement.SpaceEvenly,
+++                verticalAlignment = Alignment.CenterVertically
+++            ) {
+++                // Search
+++                BottomBarItem(
+++                    icon = {
+++                        Icon(
+++                            painter = painterResource(
+++                                if (uiState.isSearchActive) R.drawable.ic_close_24
+++                                else R.drawable.ic_search_24
+++                            ),
+++                            contentDescription = "Search",
+++                            modifier = Modifier.size(22.dp)
+++                        )
+++                    },
+++                    label = if (uiState.isSearchActive) "Close" else "Search",
+++                    isActive = uiState.isSearchActive,
+++                    onClick = onToggleSearch
+++                )
++ 
++-            // View toggle
++-            BottomBarItem(
++-                icon = {
++-                    Icon(
++-                        painter = painterResource(
++-                            if (uiState.viewMode == ViewMode.GRID) R.drawable.ic_view_list_24
++-                            else R.drawable.ic_grid_view_24
++-                        ),
++-                        contentDescription = null,
++-                        modifier = Modifier.size(22.dp)
++-                    )
++-                },
++-                label = if (uiState.viewMode == ViewMode.GRID) "List" else "Grid",
++-                onClick = onToggleViewMode
++-            )
+++                // View toggle
+++                BottomBarItem(
+++                    icon = {
+++                        Icon(
+++                            painter = painterResource(
+++                                if (uiState.viewMode == ViewMode.GRID) R.drawable.ic_view_list_24
+++                                else R.drawable.ic_grid_view_24
+++                            ),
+++                            contentDescription = null,
+++                            modifier = Modifier.size(22.dp)
+++                        )
+++                    },
+++                    label = if (uiState.viewMode == ViewMode.GRID) "List" else "Grid",
+++                    onClick = onToggleViewMode
+++                )
++ 
++-            // Import (center, prominent — larger, elevated)
++-            BottomBarItem(
++-                icon = {
++-                    androidx.compose.material3.Surface(
++-                        modifier = Modifier.size(48.dp),
++-                        shape = androidx.compose.foundation.shape.CircleShape,
++-                        color = LuminarGold,
++-                        shadowElevation = 4.dp
++-                    ) {
++-                        Box(contentAlignment = Alignment.Center) {
++-                            Icon(
++-                                painter = painterResource(R.drawable.ic_add_24),
++-                                contentDescription = "Import",
++-                                tint = Color(0xFF171100),
++-                                modifier = Modifier.size(24.dp)
++-                            )
+++                // Import (center, prominent — larger, elevated)
+++                BottomBarItem(
+++                    icon = {
+++                        androidx.compose.material3.Surface(
+++                            modifier = Modifier.size(48.dp),
+++                            shape = androidx.compose.foundation.shape.CircleShape,
+++                            color = LuminarGold,
+++                            shadowElevation = 4.dp
+++                        ) {
+++                            Box(contentAlignment = Alignment.Center) {
+++                                Icon(
+++                                    painter = painterResource(R.drawable.ic_add_24),
+++                                    contentDescription = "Import",
+++                                    tint = Color(0xFF171100),
+++                                    modifier = Modifier.size(24.dp)
+++                                )
+++                            }
++                         }
++-                    }
++-                },
++-                label = "Import",
++-                onClick = onImport
++-            )
+++                    },
+++                    label = "Import",
+++                    onClick = onImport
+++                )
++ 
++-            // Stats
++-            BottomBarItem(
++-                icon = {
++-                    Icon(
++-                        painter = painterResource(R.drawable.ic_bar_chart_24),
++-                        contentDescription = null,
++-                        modifier = Modifier.size(22.dp)
++-                    )
++-                },
++-                label = "Stats",
++-                onClick = onShowStats
++-            )
+++                // Stats
+++                BottomBarItem(
+++                    icon = {
+++                        Icon(
+++                            painter = painterResource(R.drawable.ic_bar_chart_24),
+++                            contentDescription = null,
+++                            modifier = Modifier.size(22.dp)
+++                        )
+++                    },
+++                    label = "Stats",
+++                    onClick = onShowStats
+++                )
++ 
++-            // Settings
++-            BottomBarItem(
++-                icon = {
++-                    Icon(
++-                        painter = painterResource(R.drawable.ic_settings_24),
++-                        contentDescription = "Settings",
++-                        modifier = Modifier.size(22.dp)
++-                    )
++-                },
++-                label = "Settings",
++-                onClick = onOpenSettings
++-            )
++-        }
+++                // Settings
+++                BottomBarItem(
+++                    icon = {
+++                        Icon(
+++                            painter = painterResource(R.drawable.ic_settings_24),
+++                            contentDescription = "Settings",
+++                            modifier = Modifier.size(22.dp)
+++                        )
+++                    },
+++                    label = "Settings",
+++                    onClick = onOpenSettings
+++                )
+++            }
++         }
++     }
++ }
++@@ -1096,24 +1111,41 @@ private fun BookCard(
++ @Composable
++ private fun CoverPlaceholder(bookTitle: String) {
++     val firstLetter = bookTitle.firstOrNull()?.uppercaseChar()?.toString() ?: "?"
+++    val isDarkTheme = androidx.compose.foundation.isSystemInDarkTheme()
+++
+++    val gradientColors = if (isDarkTheme) {
+++        listOf(
+++            LuminarGold.copy(alpha = 0.85f),
+++            Color(0xFF3B3014),
+++            Color(0xFF111111)
+++        )
+++    } else {
+++        listOf(
+++            LuminarGold.copy(alpha = 0.15f),
+++            Color(0xFFF9F6F0),
+++            Color(0xFFEDEDED)
+++        )
+++    }
+++
+++    val textColor = if (isDarkTheme) {
+++        Color(0xFF171100)
+++    } else {
+++        Color(0xFF5C4F22)
+++    }
++ 
++     Box(
++         modifier = Modifier
++             .fillMaxSize()
++             .background(
++                 brush = Brush.linearGradient(
++-                    colors = listOf(
++-                        LuminarGold.copy(alpha = 0.85f),
++-                        Color(0xFF3B3014),
++-                        Color(0xFF111111)
++-                    )
+++                    colors = gradientColors
++                 )
++             ),
++         contentAlignment = Alignment.Center
++     ) {
++         Text(
++             text = firstLetter,
++-            color = Color(0xFF171100),
+++            color = textColor,
++             fontSize = 54.sp,
++             fontWeight = FontWeight.SemiBold,
++             fontFamily = LuminarTitleFont
++diff --git a/app/src/main/java/com/luminar/reader/presentation/reader/ComicReaderView.kt b/app/src/main/java/com/luminar/reader/presentation/reader/ComicReaderView.kt
++index 52d2492..bb24524 100644
++--- a/app/src/main/java/com/luminar/reader/presentation/reader/ComicReaderView.kt
+++++ b/app/src/main/java/com/luminar/reader/presentation/reader/ComicReaderView.kt
++@@ -18,6 +18,9 @@ import androidx.compose.runtime.Composable
++ import androidx.compose.runtime.LaunchedEffect
++ import androidx.compose.runtime.getValue
++ import androidx.compose.runtime.mutableFloatStateOf
+++import androidx.compose.runtime.produceState
+++import kotlinx.coroutines.withContext
+++import kotlinx.coroutines.Dispatchers
++ import androidx.compose.runtime.remember
++ import androidx.compose.runtime.setValue
++ import androidx.compose.ui.Alignment
++@@ -103,6 +106,12 @@ fun ComicReaderView(
++     }
++ }
++ 
+++sealed interface ComicLoadState {
+++    object Loading : ComicLoadState
+++    data class Success(val bitmap: android.graphics.Bitmap) : ComicLoadState
+++    object Error : ComicLoadState
+++}
+++
++ @Composable
++ private fun ComicPage(
++     comicFile: File,
++@@ -110,11 +119,16 @@ private fun ComicPage(
++     onTap: () -> Unit,
++     getImageBytes: (File, String) -> ByteArray
++ ) {
++-    val bitmap = remember(comicFile.absolutePath, entryPath) {
++-        runCatching {
++-            val bytes = getImageBytes(comicFile, entryPath)
++-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
++-        }.getOrNull()
+++    val loadState = produceState<ComicLoadState>(initialValue = ComicLoadState.Loading, comicFile.absolutePath, entryPath) {
+++        value = withContext(Dispatchers.IO) {
+++            runCatching {
+++                val bytes = getImageBytes(comicFile, entryPath)
+++                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+++            }.fold(
+++                onSuccess = { bmp -> if (bmp != null) ComicLoadState.Success(bmp) else ComicLoadState.Error },
+++                onFailure = { ComicLoadState.Error }
+++            )
+++        }
++     }
++ 
++     var scale by remember { mutableFloatStateOf(1f) }
++@@ -142,26 +156,34 @@ private fun ComicPage(
++             },
++         contentAlignment = Alignment.Center
++     ) {
++-        if (bitmap != null) {
++-            Image(
++-                bitmap = bitmap.asImageBitmap(),
++-                contentDescription = "Comic page",
++-                modifier = Modifier
++-                    .fillMaxSize()
++-                    .graphicsLayer(
++-                        scaleX = scale,
++-                        scaleY = scale,
++-                        translationX = offsetX,
++-                        translationY = offsetY
++-                    ),
++-                contentScale = ContentScale.Fit
++-            )
++-        } else {
++-            Text(
++-                text = "Unable to load page",
++-                color = Color.White.copy(alpha = 0.5f),
++-                fontSize = 14.sp
++-            )
+++        when (val state = loadState.value) {
+++            ComicLoadState.Loading -> {
+++                androidx.compose.material3.CircularProgressIndicator(
+++                    color = com.luminar.reader.presentation.theme.LuminarGold.copy(alpha = 0.5f)
+++                )
+++            }
+++            is ComicLoadState.Success -> {
+++                Image(
+++                    bitmap = state.bitmap.asImageBitmap(),
+++                    contentDescription = "Comic page",
+++                    modifier = Modifier
+++                        .fillMaxSize()
+++                        .graphicsLayer(
+++                            scaleX = scale,
+++                            scaleY = scale,
+++                            translationX = offsetX,
+++                            translationY = offsetY
+++                        ),
+++                    contentScale = ContentScale.Fit
+++                )
+++            }
+++            ComicLoadState.Error -> {
+++                Text(
+++                    text = "Unable to load page",
+++                    color = Color.White.copy(alpha = 0.5f),
+++                    fontSize = 14.sp
+++                )
+++            }
++         }
++     }
++ }
++diff --git a/app/src/main/java/com/luminar/reader/presentation/reader/ReaderScreen.kt b/app/src/main/java/com/luminar/reader/presentation/reader/ReaderScreen.kt
++index 4cd7c1b..3b0382d 100644
++--- a/app/src/main/java/com/luminar/reader/presentation/reader/ReaderScreen.kt
+++++ b/app/src/main/java/com/luminar/reader/presentation/reader/ReaderScreen.kt
++@@ -235,12 +235,17 @@ fun ReaderScreen(
++                         val renderFormat = when {
++                             uiState.isEpub -> BookFormat.MARKDOWN
++                             uiState.isDocument -> BookFormat.MARKDOWN
+++                            uiState.isHtml -> if (uiState.isHtmlPreviewMode) BookFormat.MARKDOWN else BookFormat.XML
++                             else -> book.format
++                         }
+++                        val renderingMode = when {
+++                            uiState.isHtml -> if (uiState.isHtmlPreviewMode) RenderingMode.MARKDOWN else RenderingMode.CODE
+++                            else -> book.format.renderingMode
+++                        }
++                         TextReaderView(
++                             content = textContent,
++                             format = renderFormat,
++-                            renderingMode = book.format.renderingMode,
+++                            renderingMode = renderingMode,
++                             theme = uiState.currentTheme,
++                             fontScale = uiState.fontScale,
++                             searchQuery = uiState.searchQuery,
++@@ -316,6 +321,12 @@ fun ReaderScreen(
++                     onGoToBookmark = { bookmark ->
++                         viewModel.onEvent(ReaderEvent.GoToBookmark(bookmark))
++                     },
+++                    onToggleHtmlViewMode = {
+++                        viewModel.onEvent(ReaderEvent.ToggleHtmlViewMode)
+++                    },
+++                    onGoToChapter = { chapterIndex ->
+++                        viewModel.onEvent(ReaderEvent.GoToChapter(chapterIndex))
+++                    },
++                     onInteraction = viewModel::onControlsInteraction
++                 )
++ 
++@@ -405,6 +416,8 @@ private fun PdfReaderView(
++                     .enableSwipe(true)
++                     .swipeHorizontal(true)
++                     .enableDoubletap(true)
+++                    .enableAntialiasing(true)
+++                    .pageFitPolicy(com.github.barteksc.pdfviewer.util.FitPolicy.WIDTH)
++                     .onPageChange { page, _ ->
++                         onPageChanged(page)
++                     }
++@@ -450,6 +463,8 @@ private fun ReaderControlsOverlay(
++     onToggleTts: () -> Unit,
++     onToggleBookmark: () -> Unit,
++     onGoToBookmark: (Bookmark) -> Unit,
+++    onToggleHtmlViewMode: () -> Unit,
+++    onGoToChapter: (Int) -> Unit,
++     onInteraction: () -> Unit
++ ) {
++     AnimatedVisibility(
++@@ -492,6 +507,8 @@ private fun ReaderControlsOverlay(
++                 onToggleTts = onToggleTts,
++                 onToggleBookmark = onToggleBookmark,
++                 onGoToBookmark = onGoToBookmark,
+++                onToggleHtmlViewMode = onToggleHtmlViewMode,
+++                onGoToChapter = onGoToChapter,
++                 onInteraction = onInteraction
++             )
++ 
++@@ -517,6 +534,8 @@ private fun ReaderTopControls(
++     onToggleTts: () -> Unit,
++     onToggleBookmark: () -> Unit,
++     onGoToBookmark: (Bookmark) -> Unit,
+++    onToggleHtmlViewMode: () -> Unit,
+++    onGoToChapter: (Int) -> Unit,
++     onInteraction: () -> Unit
++ ) {
++     val containerColor = uiState.currentTheme.readerControlsContainerColor()
++@@ -571,6 +590,26 @@ private fun ReaderTopControls(
++                 }
++             }
++ 
+++            // HTML View Mode switcher toggle button (HTML files only)
+++            if (uiState.isHtml) {
+++                IconButton(
+++                    onClick = {
+++                        onInteraction()
+++                        onToggleHtmlViewMode()
+++                    }
+++                ) {
+++                    Icon(
+++                        painter = painterResource(
+++                            if (uiState.isHtmlPreviewMode) R.drawable.ic_view_list_24
+++                            else R.drawable.ic_auto_stories_48
+++                        ),
+++                        contentDescription = if (uiState.isHtmlPreviewMode) "Source Code" else "Article Preview",
+++                        modifier = Modifier.size(22.dp),
+++                        tint = if (uiState.isHtmlPreviewMode) contentColor else LuminarGold
+++                    )
+++                }
+++            }
+++
++             if (uiState.usesTextRenderer) {
++                 IconButton(
++                     onClick = {
++@@ -611,7 +650,7 @@ private fun ReaderTopControls(
++                                     },
++                                     onClick = {
++                                         showToc = false
++-                                        // TODO: Jump to chapter block index
+++                                        onGoToChapter(idx)
++                                         onInteraction()
++                                     }
++                                 )
++diff --git a/app/src/main/java/com/luminar/reader/presentation/reader/ReaderViewModel.kt b/app/src/main/java/com/luminar/reader/presentation/reader/ReaderViewModel.kt
++index 12932fd..0046071 100644
++--- a/app/src/main/java/com/luminar/reader/presentation/reader/ReaderViewModel.kt
+++++ b/app/src/main/java/com/luminar/reader/presentation/reader/ReaderViewModel.kt
++@@ -62,7 +62,8 @@ data class ReaderUiState(
++     val lastErrorThrowable: Throwable? = null,
++     val showErrorReport: Boolean = false,
++     val bookmarks: List<Bookmark> = emptyList(),
++-    val isCurrentPageBookmarked: Boolean = false
+++    val isCurrentPageBookmarked: Boolean = false,
+++    val isHtmlPreviewMode: Boolean = true
++ ) {
++     val totalChapters: Int
++         get() = chapterTitles.size
++@@ -103,6 +104,9 @@ data class ReaderUiState(
++     val isDocument: Boolean
++         get() = book?.format?.isDocumentFormat == true
++ 
+++    val isHtml: Boolean
+++        get() = book?.format == BookFormat.HTML
+++
++     val isComicBook: Boolean
++         get() = book?.format?.isComicBook == true
++ 
++@@ -150,6 +154,9 @@ sealed interface ReaderEvent {
++     data object ToggleBookmark : ReaderEvent
++     data class GoToBookmark(val bookmark: Bookmark) : ReaderEvent
++     data class DeleteBookmark(val bookmark: Bookmark) : ReaderEvent
+++    // Chapter navigation
+++    data class GoToChapter(val chapterIndex: Int) : ReaderEvent
+++    data object ToggleHtmlViewMode : ReaderEvent
++ }
++ 
++ @OptIn(FlowPreview::class)
++@@ -213,6 +220,8 @@ class ReaderViewModel @Inject constructor(
++             ReaderEvent.ToggleBookmark -> toggleBookmark()
++             is ReaderEvent.GoToBookmark -> goToPage(event.bookmark.page)
++             is ReaderEvent.DeleteBookmark -> deleteBookmark(event.bookmark)
+++            is ReaderEvent.GoToChapter -> goToChapter(event.chapterIndex)
+++            ReaderEvent.ToggleHtmlViewMode -> toggleHtmlViewMode()
++             ReaderEvent.OpenSearch -> openSearch()
++             ReaderEvent.CloseSearch -> closeSearch()
++             is ReaderEvent.UpdateSearchQuery -> updateSearchQuery(event.query)
++@@ -261,12 +270,25 @@ class ReaderViewModel @Inject constructor(
++         }
++     }
++ 
+++    // Cache start-block index for each chapter
+++    private var chapterBlockIndices: List<Int> = emptyList()
+++
++     /**
++      * Called by TextReaderView after it has parsed its blocks,
++      * so the VM can search through them.
++      */
++     fun onBlocksParsed(blockTexts: List<String>) {
++         parsedBlockTexts = blockTexts
+++        
+++        // Map each chapter title to its starting text block index
+++        val titles = _uiState.value.chapterTitles
+++        chapterBlockIndices = titles.map { title ->
+++            val index = blockTexts.indexOfFirst { text ->
+++                text.trim().equals(title.trim(), ignoreCase = true)
+++            }
+++            index.coerceAtLeast(0)
+++        }
+++
++         // Re-run search if there's an active query
++         val query = _uiState.value.searchQuery
++         if (query.isNotEmpty()) {
++@@ -274,6 +296,26 @@ class ReaderViewModel @Inject constructor(
++         }
++     }
++ 
+++    private fun goToChapter(chapterIndex: Int) {
+++        val titles = _uiState.value.chapterTitles
+++        val targetTitle = titles.getOrNull(chapterIndex) ?: return
+++        
+++        val blockIdx = parsedBlockTexts.indexOfFirst { text ->
+++            text.trim().equals(targetTitle.trim(), ignoreCase = true)
+++        }
+++        
+++        if (blockIdx >= 0) {
+++            _uiState.update { state ->
+++                state.copy(
+++                    currentChapterIndex = chapterIndex,
+++                    currentPage = chapterIndex,
+++                    scrollToBlockIndex = blockIdx
+++                )
+++            }
+++        }
+++        onControlsInteraction()
+++    }
+++
++     private fun toggleTts() {
++         val state = _uiState.value
++         val ttsState = ttsController.state.value
++@@ -548,7 +590,13 @@ class ReaderViewModel @Inject constructor(
++     private fun loadTextContent(book: Book) {
++         viewModelScope.launch {
++             try {
++-                val content = bookRepository.readTextContent(book)
+++                val content = if (book.format == BookFormat.CSV) {
+++                    bookRepository.readTextContent(book)
+++                } else if (book.format == BookFormat.HTML && _uiState.value.isHtmlPreviewMode) {
+++                    bookRepository.readDocumentContent(book)
+++                } else {
+++                    bookRepository.readTextContent(book)
+++                }
++                 val words = content.split(Regex("\\s+")).count { it.isNotBlank() }
++                 val chars = content.length
++                 _uiState.update {
++@@ -566,6 +614,14 @@ class ReaderViewModel @Inject constructor(
++         }
++     }
++ 
+++    private fun toggleHtmlViewMode() {
+++        val book = _uiState.value.book ?: return
+++        val newMode = !_uiState.value.isHtmlPreviewMode
+++        _uiState.update { it.copy(isHtmlPreviewMode = newMode, textContent = null) }
+++        loadTextContent(book)
+++        onControlsInteraction()
+++    }
+++
++     private fun observeInitialProgress() {
++         viewModelScope.launch {
++             val progress = bookRepository.getProgress(bookId).first()
++@@ -640,7 +696,24 @@ class ReaderViewModel @Inject constructor(
++     }
++ 
++     private fun onScrollPositionChanged(position: Int) {
++-        _uiState.update { it.copy(scrollPosition = position) }
+++        _uiState.update { state ->
+++            var activeChapterIdx = state.currentChapterIndex
+++            if (chapterBlockIndices.isNotEmpty()) {
+++                activeChapterIdx = 0
+++                for (i in chapterBlockIndices.indices.reversed()) {
+++                    if (position >= chapterBlockIndices[i]) {
+++                        activeChapterIdx = i
+++                        break
+++                    }
+++                }
+++            }
+++            
+++            state.copy(
+++                scrollPosition = position,
+++                currentChapterIndex = activeChapterIdx,
+++                currentPage = activeChapterIdx
+++            )
+++        }
++         pageChanges.tryEmit(position)
++     }
++ 
++diff --git a/app/src/main/java/com/luminar/reader/presentation/reader/TtsController.kt b/app/src/main/java/com/luminar/reader/presentation/reader/TtsController.kt
++index 80df493..b2b172f 100644
++--- a/app/src/main/java/com/luminar/reader/presentation/reader/TtsController.kt
+++++ b/app/src/main/java/com/luminar/reader/presentation/reader/TtsController.kt
++@@ -79,12 +79,14 @@ class TtsController @Inject constructor(
++                             speakChunk(currentIndex)
++                         } else {
++                             _state.update { it.copy(isSpeaking = false, currentChunkIndex = 0) }
+++                            TtsService.stop(context)
++                         }
++                     }
++ 
++                     @Deprecated("Deprecated in API")
++                     override fun onError(utteranceId: String?) {
++                         _state.update { it.copy(isSpeaking = false) }
+++                        TtsService.stop(context)
++                     }
++                 })
++             }
++@@ -112,17 +114,20 @@ class TtsController @Inject constructor(
++ 
++         if (chunks.isNotEmpty()) {
++             speakChunk(currentIndex)
+++            TtsService.start(context)
++         }
++     }
++ 
++     fun pause() {
++         tts?.stop()
++         _state.update { it.copy(isSpeaking = false) }
+++        TtsService.stop(context)
++     }
++ 
++     fun resume() {
++         if (chunks.isNotEmpty() && currentIndex < chunks.size) {
++             speakChunk(currentIndex)
+++            TtsService.start(context)
++         }
++     }
++ 
++@@ -131,6 +136,7 @@ class TtsController @Inject constructor(
++         currentIndex = 0
++         chunks = emptyList()
++         _state.update { it.copy(isSpeaking = false, currentChunkIndex = 0, totalChunks = 0) }
+++        TtsService.stop(context)
++     }
++ 
++     fun skipForward() {
++diff --git a/app/src/main/java/com/luminar/reader/presentation/reader/TtsService.kt b/app/src/main/java/com/luminar/reader/presentation/reader/TtsService.kt
++new file mode 100644
++index 0000000..3debef4
++--- /dev/null
+++++ b/app/src/main/java/com/luminar/reader/presentation/reader/TtsService.kt
++@@ -0,0 +1,90 @@
+++// app/src/main/java/com/luminar/reader/presentation/reader/TtsService.kt
+++package com.luminar.reader.presentation.reader
+++
+++import android.app.Notification
+++import android.app.NotificationChannel
+++import android.app.NotificationManager
+++import android.app.PendingIntent
+++import android.app.Service
+++import android.content.Context
+++import android.content.Intent
+++import android.os.Build
+++import android.os.IBinder
+++import androidx.core.app.NotificationCompat
+++import com.luminar.reader.MainActivity
+++
+++class TtsService : Service() {
+++
+++    companion object {
+++        private const val CHANNEL_ID = "tts_channel"
+++        private const val NOTIFICATION_ID = 101
+++        
+++        fun start(context: Context) {
+++            val intent = Intent(context, TtsService::class.java)
+++            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+++                context.startForegroundService(intent)
+++            } else {
+++                context.startService(intent)
+++            }
+++        }
+++        
+++        fun stop(context: Context) {
+++            val intent = Intent(context, TtsService::class.java)
+++            context.stopService(intent)
+++        }
+++    }
+++
+++    override fun onCreate() {
+++        super.onCreate()
+++        createNotificationChannel()
+++    }
+++
+++    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+++        val notification = buildNotification()
+++        startForeground(NOTIFICATION_ID, notification)
+++        return START_STICKY
+++    }
+++
+++    override fun onBind(intent: Intent?): IBinder? = null
+++
+++    private fun buildNotification(): Notification {
+++        val intent = Intent(this, MainActivity::class.java).apply {
+++            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+++        }
+++        val pendingIntent = PendingIntent.getActivity(
+++            this, 0, intent,
+++            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+++        )
+++
+++        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+++            .setContentTitle("Luminar Read Aloud")
+++            .setContentText("Reading document text in background...")
+++            .setContentIntent(pendingIntent)
+++            .setOngoing(true)
+++            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+++            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+++
+++        // Try to load system volume up icon as notification icon if custom one isn't available
+++        val iconResId = runCatching {
+++            android.R.drawable.ic_media_play
+++        }.getOrDefault(android.R.drawable.stat_sys_speakerphone)
+++
+++        builder.setSmallIcon(iconResId)
+++
+++        return builder.build()
+++    }
+++
+++    private fun createNotificationChannel() {
+++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+++            val channel = NotificationChannel(
+++                CHANNEL_ID,
+++                "Luminar Read Aloud",
+++                NotificationManager.IMPORTANCE_LOW
+++            ).apply {
+++                description = "Notification for background document reading"
+++            }
+++            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+++            manager.createNotificationChannel(channel)
+++        }
+++    }
+++}
++diff --git a/app/src/main/java/com/luminar/reader/presentation/settings/SettingsScreen.kt b/app/src/main/java/com/luminar/reader/presentation/settings/SettingsScreen.kt
++index a041329..585d1e0 100644
++--- a/app/src/main/java/com/luminar/reader/presentation/settings/SettingsScreen.kt
+++++ b/app/src/main/java/com/luminar/reader/presentation/settings/SettingsScreen.kt
++@@ -35,6 +35,7 @@ import androidx.compose.ui.graphics.Color
++ import androidx.compose.ui.res.painterResource
++ import androidx.compose.ui.text.font.FontWeight
++ import androidx.compose.ui.unit.dp
+++import androidx.compose.ui.unit.sp
++ import androidx.hilt.navigation.compose.hiltViewModel
++ import androidx.lifecycle.compose.collectAsStateWithLifecycle
++ import com.luminar.reader.R
++@@ -243,6 +244,25 @@ fun SettingsScreen(
++                 }
++             }
++ 
+++            item {
+++                SectionHeader(text = "PREMIUM DESIGN THEME PRESETS (v2.0 PREVIEW)")
+++            }
+++
+++            item {
+++                PreferenceGroup {
+++                    designPresetsList.forEachIndexed { idx, preset ->
+++                        PresetOptionRow(
+++                            title = preset.title,
+++                            subtitle = preset.subtitle,
+++                            premium = true
+++                        )
+++                        if (idx < designPresetsList.lastIndex) {
+++                            PreferenceDivider()
+++                        }
+++                    }
+++                }
+++            }
+++
++             item {
++                 SectionHeader(text = "ABOUT")
++             }
++@@ -447,6 +467,38 @@ private fun formatReadingTime(minutes: Long): String {
++     }
++ }
++ 
+++@Composable
+++private fun PresetOptionRow(
+++    title: String,
+++    subtitle: String,
+++    premium: Boolean
+++) {
+++    ListItem(
+++        headlineContent = { Text(text = title, fontWeight = FontWeight.Medium) },
+++        supportingContent = { Text(text = subtitle) },
+++        trailingContent = {
+++            if (premium) {
+++                Surface(
+++                    color = LuminarGold.copy(alpha = 0.15f),
+++                    contentColor = LuminarGold,
+++                    shape = RoundedCornerShape(8.dp),
+++                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+++                ) {
+++                    Text(
+++                        text = "PREMIUM",
+++                        fontSize = 9.sp,
+++                        fontWeight = FontWeight.Bold,
+++                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+++                    )
+++                }
+++            }
+++        },
+++        colors = ListItemDefaults.colors(
+++            containerColor = Color.Transparent
+++        )
+++    )
+++}
+++
++ @Composable
++ private fun PreferenceDivider() {
++     HorizontalDivider(
++@@ -454,3 +506,38 @@ private fun PreferenceDivider() {
++         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
++     )
++ }
+++
+++private data class DesignPreset(val title: String, val subtitle: String)
+++
+++private val designPresetsList = listOf(
+++    DesignPreset("Skeuomorphism", "Early iOS tactile 3D leather calendars & wooden shelves"),
+++    DesignPreset("Flat design", "Solid colors and simple shapes with zero gradients or shadows"),
+++    DesignPreset("Material Design", "Flat layers with subtle depth shadows simulating paper sheets"),
+++    DesignPreset("Neumorphism (soft UI)", "Extruded monochrome surfaces with soft volumetric shadows"),
+++    DesignPreset("Glassmorphism", "Frosted glass overlays with blur, transparency, and borders"),
+++    DesignPreset("Claymorphism", "Puffy, rounded clay-like shapes with soft volumetric shadows"),
+++    DesignPreset("Minimalism", "Stripped down to essentials, heavy white space, clean typography"),
+++    DesignPreset("Brutalism / Neubrutalism", "Raw typography, thick black borders, and clashing bold colors"),
+++    DesignPreset("Maximalism", "Dense layouts, bold colors, layered textures, and high visual density"),
+++    DesignPreset("Swiss / International Typographic Style", "Grid-based layouts, sans-serif typography, and strong hierarchy"),
+++    DesignPreset("Retro / Vaporwave / Y2K", "Nostalgic pixel art, chrome text, glitch effects, and neon gradients"),
+++    DesignPreset("Cyberpunk / Neon UI", "OLED black backgrounds with glowing neon-line accents"),
+++    DesignPreset("Bento grid design", "Modular, rounded grid boxes organized like Apple product slides"),
+++    DesignPreset("Dark mode / Monochrome", "Near-black backgrounds with limited accents to reduce eye strain"),
+++    DesignPreset("Aurora / Mesh gradient design", "Soft, blurred, colorful gradient blobs as fluid backgrounds"),
+++    DesignPreset("Paper UI / Papercraft", "Layered cutout shapes simulating stacked sheets of real paper"),
+++    DesignPreset("Editorial / Print-inspired web", "Magazine layouts: serif headlines, column grids, and pull quotes"),
+++    DesignPreset("Riso (Risograph) style", "Grainy, slightly misaligned color layers resembling screen-printing"),
+++    DesignPreset("Newsprint UI", "Off-white cream backgrounds, halftone dot textures, and news serif"),
+++    DesignPreset("Parchment / Vellum", "Warm cream tones, subtle paper-grain textures, and soft aged edges"),
+++    DesignPreset("Slate / Charcoal minimalism", "Calmer dark grey-blue backgrounds with muted accent colors"),
+++    DesignPreset("Concrete / Stone UI", "Subtle noise texture on cards resembling raw concrete and slate"),
+++    DesignPreset("Linen / Fabric texture", "Soft woven woven-fabric textures used in classic macOS notes"),
+++    DesignPreset("Chalkboard / Blackboard UI", "Dark slate-green background with chalk-style sketchy typography"),
+++    DesignPreset("Blueprint UI", "Navy background with white grid lines and technical-drawing icons"),
+++    DesignPreset("Notebook / Sketch UI", "Lined paper backgrounds, handwritten-style fonts, and doodle icons"),
+++    DesignPreset("Terrazzo", "Speckled multi-color stone pattern as accent blocks"),
+++    DesignPreset("Cork board UI", "Textured tan cork background with pinned cards and post-it notes"),
+++    DesignPreset("Grain/Noise minimalism", "Clean flat layout with a subtle film-grain texture overlay"),
+++    DesignPreset("Frosted stone / Matte slate cards", "Textured matte slate-grey finish with soft inset shadows")
+++)
++diff --git a/docs/CONSOLIDATED_ROADMAP_PHASES_7_TO_11.md b/docs/CONSOLIDATED_ROADMAP_PHASES_7_TO_11.md
++new file mode 100644
++index 0000000..f6ee8d7
++--- /dev/null
+++++ b/docs/CONSOLIDATED_ROADMAP_PHASES_7_TO_11.md
++@@ -0,0 +1,148 @@
+++# Luminar Reader — Consolidated Roadmap (Phases 7–11)
+++
+++*Compiled on: July 14, 2026*
+++*Objective: Unifying the Strategic Plan, UI/UX Repairs, and Document Formatting PRDs into a clear, sequential development pipeline.*
+++
+++---
+++
+++## Roadmap Overview
+++
+++This consolidated roadmap maps all of our previous audits and product requirement documents into **five sequential development phases (Phases 7 through 11)**. 
+++
+++By executing this progressive, step-by-step pipeline, you will systematically resolve your hidden engine bugs, eliminate UI main-thread jank, preserve complex document layouts, and deliver world-class premium features like background TTS and decentralized sync.
+++
+++```
+++  ┌──────────────────────────────────────────────────────────────┐
+++  │  PHASE 7: Critical UI/UX Repair & Chapter Navigation         │
+++  └──────────────────────────────┬───────────────────────────────┘
+++                                 v
+++  ┌──────────────────────────────────────────────────────────────┐
+++  │  PHASE 8: High-Performance Comic Engine & Layout Preservation│
+++  └──────────────────────────────┬───────────────────────────────┘
+++                                 v
+++  ┌──────────────────────────────────────────────────────────────┐
+++  │  PHASE 9: Hybrid HTML Reader & Theme-Aware Visuals           │
+++  └──────────────────────────────┬───────────────────────────────┘
+++                                 v
+++  ┌──────────────────────────────────────────────────────────────┐
+++  │  PHASE 10: Multilingual Decodings & SQLite FTS5 Search        │
+++  └──────────────────────────────┬───────────────────────────────┘
+++                                 v
+++  ┌──────────────────────────────────────────────────────────────┐
+++  │  PHASE 11: Foreground Services (Background TTS & Cloud Sync) │
+++  └──────────────────────────────────────────────────────────────┘
+++```
+++
+++---
+++
+++## 📅 Phase 7: Critical UI/UX Repair & Chapter Navigation
+++*Objective: Revive broken/placeholder functionalities and restore basic, intuitive reader utilities.*
+++
+++| Parameter | Specification |
+++|---|---|
+++| **Effort / Complexity** | Low-Medium |
+++| **User Impact** | Extremely High (Resolves the most obvious broken-feeling bugs) |
+++| **Files to Edit** | `ReaderScreen.kt`, `ReaderViewModel.kt`, `TextReaderView.kt` |
+++
+++### 🛠️ Execution Plan:
+++1.  **Functional Chapter Jumping (TOC Revival):**
+++    *   Introduce `ReaderEvent.GoToChapter(chapterIndex: Int)` inside `ReaderViewModel.kt`.
+++    *   When clicked, have the ViewModel scan the list of parsed `blockTexts` for the Level-1 Markdown heading (`# Chapter Title`) corresponding to that chapter's title.
+++    *   Update `scrollToBlockIndex` with that block's index. The existing `LaunchedEffect` in `TextReaderView.kt` will automatically animate the scroll to the target block.
+++2.  **Live Progress Tracking & Active Chapter Headers:**
+++    *   Currently, the top header bar displays "Ch. 1 of 12" and the bottom progress bar stays stuck at `0%` forever as the user scrolls through any text-based format.
+++    *   In the ViewModel, scan the parsed blocks to map which block index ranges correspond to which chapter indices (e.g., Chapter 1: blocks 0–40, Chapter 2: blocks 41–95).
+++    *   In `onScrollPositionChanged(firstVisibleBlockIndex)`, check which chapter range the block index falls into and dynamically update `uiState.currentPage` and `uiState.currentChapterIndex`, immediately animating your gold progress bar in real-time as the user scrolls.
+++3.  **PDF Pinch-To-Zoom Gestures:**
+++    *   Configure `.enableDoubletap(true)` and `.enableAntialiasing(true)` inside the native configuration block of the `AndroidView` wrapper in `PdfReaderView` (inside `ReaderScreen.kt`), allowing users to zoom in and read small text.
+++
+++---
+++
+++## 📅 Phase 8: High-Performance Comic Engine & Layout Preservation
+++*Objective: Eliminate scroll jank in Comic Mode and preserve complex document layouts (page breaks, alignments, dividers).*
+++
+++| Parameter | Specification |
+++|---|---|
+++| **Effort / Complexity** | Medium |
+++| **User Impact** | Very High (Buttery-smooth scrolling and premium document formatting) |
+++| **Files to Edit** | `ComicReaderView.kt`, `DocumentParser.kt`, `EpubParser.kt`, `TextReaderView.kt` |
+++
+++### 🛠️ Execution Plan:
+++1.  **Asynchronous Comic Page Loading:**
+++    *   Remove synchronous file unzipping and `BitmapFactory.decodeByteArray` from the Main (UI) thread inside `ComicPage`'s `remember` block.
+++    *   Shift decoding tasks entirely to background threads (`Dispatchers.IO`) utilizing a Compose `produceState` or background `LaunchedEffect`.
+++    *   Render a subtle shimmer loading block while the image is loading, keeping page swipes at 60–120 FPS.
+++2.  **DOCX Page Breaks and Dividers:**
+++    *   Update `docxXmlToText` inside `DocumentParser.kt` to scan for page break markers (`<w:br w:type="page"/>` or `<w:lastRenderedPageBreak/>`) and section separators.
+++    *   When matched, append a Markdown divider `\n\n---\n\n`. This parses directly as a native `TextBlock.Divider` in `TextReaderView`, rendering as a beautiful Material 3 `HorizontalDivider` line.
+++3.  **Horizontal Rule Scene Splits for EPUB & MOBI:**
+++    *   Replace `<hr[^>]*>` tags inside `stripHtmlToMarkdown()` and `htmlToPlainText()` with `\n\n---\n\n` instead of stripping them, preserving crucial author perspective/scene shifts.
+++4.  **Text Alignment & Blockquote Preservation:**
+++    *   Detect paragraph alignment markers `<w:jc w:val="center|right"/>` and map them to Compose `TextAlign.Center` and `TextAlign.End` inside `TextReaderView`.
+++    *   Detect Word indents `<w:ind w:left="X"/>` and format those runs as Markdown Blockquotes (`> Quote text`), triggering vertical Gold accent bars.
+++
+++---
+++
+++## 📅 Phase 9: Hybrid HTML Reader & Theme-Aware Visuals
+++*Objective: Deliver a dual-mode HTML view for power users and establish unified Light/Dark mode consistency.*
+++
+++| Parameter | Specification |
+++|---|---|
+++| **Effort / Complexity** | Low-Medium |
+++| **User Impact** | High (Adds an extremely unique developer utility and visual polish) |
+++| **Files to Edit** | `ReaderScreen.kt`, `ReaderViewModel.kt`, `LibraryScreen.kt`, `TextReaderView.kt` |
+++
+++### 🛠️ Execution Plan:
+++1.  **HTML Mode Switcher UI:**
+++    *   Add a toggle button inside the top toolbar of `ReaderScreen.kt` (only visible when `book.format == BookFormat.HTML`).
+++    *   **Visual Icons:** If Preview is active, display a terminal icon 💻 ("Switch to Code"). If Code is active, display a globe icon 🌐 ("Switch to Preview").
+++2.  **HTML View State Engine:**
+++    *   Introduce `ReaderEvent.ToggleHtmlViewMode` which toggles a `isHtmlPreviewMode: Boolean` flag in the state.
+++    *   **If True (Preview Mode):** Load the file, route it through `stripHtmlToMarkdown()`, and set `renderFormat = BookFormat.MARKDOWN`.
+++    *   **If False (Code Mode):** Load the file as a raw text string and set `renderFormat = BookFormat.XML`, rendering it in a syntax-highlighted dark monospace container with line numbers.
+++3.  **Theme-Aware Cover Placeholders:**
+++    *   Refactor `CoverPlaceholder` in `LibraryScreen.kt` to be theme-aware.
+++    *   In Light Mode, swap the AMOLED pitch-black and dark-gold gradient for a soft, light gold-tinted paper background and dark-charcoal text, preserving Light Mode's visual weight.
+++
+++---
+++
+++## 📅 Phase 10: Multilingual Decodings & SQLite FTS5 Search
+++*Objective: Fix non-English rendering bugs and upgrade search indexing performance.*
+++
+++| Parameter | Specification |
+++|---|---|
+++| **Effort / Complexity** | Low-Medium |
+++| **User Impact** | Critical (Unlocks global multilingual support and fast relevance search rankings) |
+++| **Files to Edit** | `DocumentParser.kt`, `AppDatabase.kt` (Room database), `BookDao.kt` |
+++
+++### 🛠️ Execution Plan:
+++1.  **Unified Multilingual Entity Decoders:**
+++    *   Currently, `decodeXmlEntities` is crippled and ignores decimal and hex entities like `&#20013;` (Chinese characters), mathematical symbols, and curly quotes, rendering non-English files unreadable.
+++    *   Swap out `decodeXmlEntities` inside `DocumentParser.kt`. Force DOCX, XLSX, and PPTX parsers to use your robust, regex-backed `decodeHtmlEntities` (which already decodes decimal and hexadecimal entities perfectly).
+++2.  **Non-English DOCX Heading Support:**
+++    *   Your DOCX parser only detects headings if they contain the English style name `"Heading"`.
+++    *   Modify your heading style detection to check the underlying Word heading layout hierarchy index properties (`w:outlineLvl`) instead of localized name strings, ensuring headings render perfectly on French, German, or Spanish Word documents.
+++3.  **SQLite FTS5 Database Migration:**
+++    *   FTS5 is natively supported on 100% of devices running Android API 26+ (your minimum SDK).
+++    *   Safely migrate your Room search database virtual tables from FTS4 to FTS5.
+++    *   Unlock the **BM25 Relevance Ranking algorithm** so that in-book search matches are sorted by relevance and matches density, rather than raw sequential order.
+++
+++---
+++
+++## 📅 Phase 11: Foreground Services (Background TTS & Cloud Sync)
+++*Objective: Transition TTS to lockscreen-standard background playing and implement encrypted personal sync.*
+++
+++| Parameter | Specification |
+++|---|---|
+++| **Effort / Complexity** | High |
+++| **User Impact** | Extremely High (Delivers massive, commercial-grade premium features) |
+++| **Files to Edit** | `TtsController.kt`, `AndroidManifest.xml`, `TtsService.kt` (New), `SyncRepository.kt` (New) |
+++
+++### 🛠️ Execution Plan:
+++1.  **TTS Background Foreground Service:**
+++    *   Bind your singleton `TtsController` actions to a background-running Android `Foreground Service` (`TtsService`).
+++    *   Create a persistent notification utilizing a `MediaStyle` structure containing Play, Pause, Skip, and Stop actions. This prevents the Android OS from aggressively killing the reading voice when the screen turns off or the user switches apps.
+++2.  **Decentralized WebDAV / personal Cloud Sync:**
+++    *   Build a personal backup and sync repository.
+++    *   Compile bookmarks, reading progress, and custom tags into a highly compressed, encrypted JSON sync file (`luminar_sync.json.gz`).
+++    *   Let the user connect their own storage provider—**Google Drive, Dropbox, or any custom WebDAV/Nextcloud server**—and sync reading progress securely without hosting any proprietary cloud servers.
++diff --git a/docs/DESIGN_PRESERVATION_AND_HTML_TOGGLE_PRD.md b/docs/DESIGN_PRESERVATION_AND_HTML_TOGGLE_PRD.md
++new file mode 100644
++index 0000000..71029f0
++--- /dev/null
+++++ b/docs/DESIGN_PRESERVATION_AND_HTML_TOGGLE_PRD.md
++@@ -0,0 +1,129 @@
+++# PRD — Design Preservation & Togglable HTML View (SSS+ Grade)
+++
+++*Prepared on: July 14, 2026*
+++*Target: Implementing visual design preservation for documents and a hybrid HTML code/preview switcher*
+++
+++---
+++
+++## Part 1: Preserving "The Design" (Formatting & Layout Preservation)
+++
+++Currently, Luminar parses Word documents (`DOCX`/`ODT`) and E-books (`EPUB`/`MOBI`) into flattened, single-column plain text paragraphs. While highly readable, this approach strips away crucial structural cues—such as **horizontal line separators, page breaks, text alignments (centered poetry, right-aligned signatures), and bold section headers**—making documents look plain and generic.
+++
+++To elevate this to **SSS+ standard**, we can utilize Luminar's existing Markdown rendering capabilities in `TextReaderView` to map Word and E-book layout styles directly into native Compose elements.
+++
+++---
+++
+++### 📐 1. Word Document (`DOCX` / `ODT`) Structure Mapping
+++
+++To prevent DOCX files from rendering as flat text dumps, we will map three layout parameters from the underlying OpenXML format into Markdown:
+++
+++#### A. Page Breaks & Horizontal Lines (`---` mapping)
+++*   **The Issue:** Microsoft Word saves page breaks or structural borders using specialized tags. Currently, these are skipped, merging separate sections into a single paragraph flow.
+++*   **The OpenXML mapping:**
+++    *   **Page break tag:** `<w:br w:type="page"/>` or `<w:lastRenderedPageBreak/>`.
+++    *   **Horizontal line separator:** `<w:pBdr><w:bottom w:val="single".../></w:pBdr>`.
+++*   **The Solution:** Update `docxXmlToText` inside `DocumentParser.kt` to scan for these tags. When matched, append `\n\n---\n\n` in the output stream. This parses directly as a native `TextBlock.Divider` inside `TextReaderView`, rendering as a beautiful Material 3 `HorizontalDivider` line.
+++
+++#### B. Text Alignment Preservation (Center, Right, Justified)
+++*   **The Issue:** Center-aligned quote blocks, right-aligned dates, or justified book chapters are all forced to align-left, stripping the original formatting context.
+++*   **The OpenXML mapping:** Alignments are saved in paragraph properties: `<w:jc w:val="center"/>`, `<w:jc w:val="right"/>`, or `<w:jc w:val="both"/>` (Justified).
+++*   **The Solution:**
+++    1. Extract alignment tokens inside `docxXmlToText` and append HTML/Markdown-compatible alignment tags or annotate paragraph text blocks with formatting markers (e.g. `[align=center]`).
+++    2. Map these inside `TextReaderView` to Compose typography layout parameters: `TextAlign.Center`, `TextAlign.End`, or `TextAlign.Justify`, keeping structural layouts intact.
+++
+++#### C. Styled Blockquotes & Margins
+++*   **The Issue:** Citations or blockquotes render as standard text paragraphs, lacking indent styling.
+++*   **The OpenXML mapping:** Indented quotes are saved in paragraph indents: `<w:ind w:left="720"/>` (where 720 represents twentieths of a point).
+++*   **The Solution:** If the left indent value exceeds a specific threshold, format the parsed paragraph as a Markdown Blockquote (`> Quote text`). This triggers a styled vertical Gold bar, an italic font, and indent padding inside `TextReaderView`.
+++
+++---
+++
+++### 📖 2. E-Book (`EPUB` / `MOBI` / `HTML`) Structural Dividers
+++
+++*   **The Issue:** Authors use horizontal rule divider tags (`<hr/>`) to indicate a major time skip, scene shift, or perspective change in novels. These lines are completely stripped, causing scenes to crash into each other awkwardly.
+++*   **The Solution:** 
+++    *   Update `stripHtmlToMarkdown()` in `DocumentParser.kt` and `htmlToPlainText()` in `EpubParser.kt`.
+++    *   Replace any `<hr[^>]*>` tag with a clear Markdown divider `\n\n---\n\n` instead of stripping it.
+++    *   This instantly creates visual scene breaks throughout EPUBs, MOBIs, and HTML files!
+++
+++---
+++
+++## Part 2: Togglable HTML View (Preview vs. Source Code)
+++
+++Importing `.html` files is a common task for developers, web designers, and power users. Displaying *only* raw HTML source code is disappointing for reading articles, while displaying *only* stripped text is disappointing for viewing layouts.
+++
+++We will build a **Hybrid HTML Mode Switcher** that lets users toggle between **Preview Mode** and **Code Mode** on the fly.
+++
+++```
+++       HTML Reader Toolbar Controls:
+++  ┌──────────────────────────────────────────────┐
+++  │ [←] title.html             [⚙]  [Mode: 🌐/💻] │  Toggle Button
+++  └──────────────────────────────────────────────┘
+++```
+++
+++---
+++
+++### 📱 1. User Interface Design (The Toggle Button)
+++
+++Add a visual toggle button inside `ReaderTopControls` (at the top-right toolbar of `ReaderScreen.kt`).
+++*   **Visibility Condition:** The button **only** displays if the current file format is `BookFormat.HTML`.
+++*   **Visual Icons:**
+++    *   **Preview Mode active:** Displays a **`ic_view_list_24` (or terminal icon 💻)** representing "Switch to Source Code".
+++    *   **Code Mode active:** Displays a **`ic_auto_stories_48` (or globe icon 🌐)** representing "Switch to Rendered Preview".
+++
+++---
+++
+++### ⚙️ 2. Architectural State & Event Pipeline
+++
+++To keep the application modular and maintain Clean Architecture, we will pass events through the ViewModel:
+++
+++```
+++  ReaderScreen (User Taps Toggle)
+++         │
+++         v  [Emit Event]
+++  ReaderEvent.ToggleHtmlViewMode
+++         │
+++         v  [ViewModel Updates State]
+++  ReaderState (Swaps isHtmlPreviewMode: Boolean)
+++         │
+++         v  [Compose Recomposes UI]
+++  TextReaderView (Displays Rendered Markdown OR Syntax-Highlighted Code)
+++```
+++
+++#### A. ViewModel Events & State (`ReaderViewModel.kt`)
+++*   **New State Parameter:** `isHtmlPreviewMode: Boolean = true` (persisted in DataStore or remembered per session).
+++*   **New Event:** `ReaderEvent.ToggleHtmlViewMode`.
+++*   **The Switcher Logic:**
+++    *   When `ToggleHtmlViewMode` is received, toggle `isHtmlPreviewMode` on/off.
+++    *   Update the `textContent` inside your state:
+++        *   If `isHtmlPreviewMode` is **True**: Load the file, process it through `stripHtmlToMarkdown(htmlText)`, and set `renderFormat = BookFormat.MARKDOWN`.
+++        *   If `isHtmlPreviewMode` is **False**: Load the file as raw UTF-8 string, and set `renderFormat = BookFormat.XML` (which triggers VS Code-style syntax highlighting).
+++
+++---
+++
+++### 🎨 3. Unified Reader View Swapping (`ReaderScreen.kt`)
+++
+++In your main screen body, route the rendering mode cleanly:
+++
+++```kotlin
+++val renderFormat = when {
+++    uiState.isEpub -> BookFormat.MARKDOWN
+++    uiState.isDocument -> BookFormat.MARKDOWN
+++    uiState.isHtml -> if (uiState.isHtmlPreviewMode) BookFormat.MARKDOWN else BookFormat.XML
+++    else -> book.format
+++}
+++
+++val renderingMode = when {
+++    uiState.isHtml -> if (uiState.isHtmlPreviewMode) RenderingMode.MARKDOWN else RenderingMode.CODE
+++    else -> book.format.renderingMode
+++}
+++```
+++
+++---
+++
+++## 📈 SSS+ IMPLEMENTATION IMPACT
+++
+++By building this hybrid pipeline, you solve two major design complaints simultaneously:
+++
+++1.  **DOCX/EPUB documents maintain their original visual rhythm:** Dividers represent page transitions, quote margins provide visual hierarchy, and paragraph alignment keeps layouts looking identical to their printed origins.
+++2.  **HTML becomes a powerhouse format:** Developers can audit source code directly inside Luminar (with beautiful syntax highlighting and line numbers), then swap to rendered preview mode to read it like a fully-formatted article.
++diff --git a/docs/FUTURE_IMPROVEMENT_PLAN.md b/docs/FUTURE_IMPROVEMENT_PLAN.md
++new file mode 100644
++index 0000000..e971c4c
++--- /dev/null
+++++ b/docs/FUTURE_IMPROVEMENT_PLAN.md
++@@ -0,0 +1,183 @@
+++# Luminar Reader — Strategic Future Improvement Plan (v2.0 & Beyond)
+++
+++*Prepared on: July 14, 2026*
+++*Target Milestone: Luminar Reader v2.0*
+++*Focus: Deepening Offline-First AI, Accessibility, Synced Ecosystem, and SSS+ Engineering*
+++
+++---
+++
+++## Executive Summary
+++
+++Luminar Reader is already an outstanding, exceptionally well-architected Android e-reader. With clean MVVM architecture, Jetpack Compose, 30+ file formats with dedicated rendering modes, robust security limits, custom TTS profiles, and a gorgeous, responsive UI (SSS+ Spring animations and Glassmorphism), it stands ready to challenge established giants like Moon+ Reader Pro and ReadEra.
+++
+++To transition from an excellent independent utility to an **industry-defining powerhouse**, this plan charts the course for the next five development phases (**Phases H through L**). 
+++
+++Crucially, this plan respects Luminar's key values: **offline-first privacy, zero SDK bloat, no ads, no telemetry, and pure Kotlin/Java performance.**
+++
+++---
+++
+++## ROADMAP OVERVIEW: PHASES H–L
+++
+++```
+++  ┌────────────────────────────────────────────────────────┐
+++  │ PHASE H: Next-Gen Accessibility & RSVP Speed-Reading   │
+++  └───────────────────────────┬────────────────────────────┘
+++                              v
+++  ┌────────────────────────────────────────────────────────┐
+++  │ PHASE I: Zero-Server On-Device AI (Gemini Nano/Gemma)  │
+++  └───────────────────────────┬────────────────────────────┘
+++                              v
+++  ┌────────────────────────────────────────────────────────┐
+++  │ PHASE J: Offline Dictionary & Spaced-Repetition Cards  │
+++  └───────────────────────────┬────────────────────────────┘
+++                              v
+++  ┌────────────────────────────────────────────────────────┐
+++  │ PHASE K: Decentralized Sync & Open Annotation Exports  │
+++  └───────────────────────────┬────────────────────────────┘
+++                              v
+++  ┌────────────────────────────────────────────────────────┐
+++  │ PHASE L: Core Engine Polish & SQLite FTS5 Upgrade     │
+++  └────────────────────────────────────────────────────────┘
+++```
+++
+++---
+++
+++##  PHASE H: Next-Gen Accessibility & Speed-Reading (RSVP)
+++*Focus: Elevating TTS to audiobook standard and unlocking ultra-high-speed reading.*
+++
+++### 1. Karaoke-Style Word-by-Word TTS Highlighting
+++Currently, TTS reads text in chunks, but the user cannot visually track which word or sentence is active.
+++*   **The Improvement:** Implement dynamic visual text highlighting (Karaoke-style) synced with the spoken voice.
+++*   **How it works (Zero-Dependencies):**
+++    *   Utilize Android's native `UtteranceProgressListener`.
+++    *   Override `onRangeStart(utteranceId, start, end, frame)`. This callback provides the precise character range being spoken in real-time.
+++    *   Map these character offsets back to the active Compose `AnnotatedString` in `TextReaderView`, applying a gold background/underline style to the spoken word, auto-scrolling the viewport if the reading position moves off-screen.
+++
+++### 2. RSVP (Rapid Serial Visual Presentation) Speed-Reading Mode
+++Flashes words one-by-one in the center of the screen to eliminate eye movement, enabling reading speeds of 400–800 WPM.
+++*   **The Improvement:** Add a "Speed Read" overlay to the Reader screen.
+++*   **Design Details (Gold ORP):**
+++    *   Find the **Optimal Recognition Point (ORP)** for each word (typically the center-left letter, e.g., the 3rd letter of an 8-letter word).
+++    *   Render the word in monospace font, coloring the ORP character in gold (`#FFD700`) and the rest in standard reader text color. This anchors the user's focus.
+++    *   Provide controls for starting, pausing, rewinding, and adjusting WPM dynamically.
+++
+++### 3. Whisper-Quiet Hands-Free Voice Controls
+++*   **The Improvement:** Let users navigate pages, bookmark, or pause reading entirely via short voice commands when they are reading in hands-free mode (e.g., cooking or working out).
+++*   **Technical Implementation:** Integrate Android's local `SpeechRecognizer` to listen for micro-phrases like *"Luminar, next"* or *"Luminar, pause"* when voice controls are enabled, bypassing external APIs entirely.
+++
+++---
+++
+++## PHASE I: Zero-Server On-Device AI (Gemini Nano & Local Embeddings)
+++*Focus: Replacing the LAN-dependent Ollama scaffold with true local AI.*
+++
+++### 1. Transitioning to Google AI Edge SDK (Gemini Nano / Gemma)
+++Luminar's current network package contains an empty `OllamaApiService` and background worker. Because running Ollama on Android requires technical workarounds (e.g., Termux) or an active local LAN server, this is a barrier for general users.
+++*   **The Improvement:** Use Google's **AI Edge SDK** to run **Gemini Nano** or **Gemma-2B** directly on modern Android devices (Google Pixel 8+, Snapdragon 8 Gen 3, etc.).
+++*   **The Benefit:** 100% offline, lightning-fast, zero cloud costs, and perfectly matches Luminar's privacy-first core philosophy.
+++
+++### 2. On-Device Semantic Search (Local Vector Indexing)
+++*   **The Improvement:** Search the book not just for exact keyword matching, but by *conceptual meaning* (e.g., searching for "sadness" highlights paragraphs containing "grief", "tears", and "melancholy").
+++*   **How to Build:**
+++    *   Use a lightweight local embedding model via TensorFlow Lite.
+++    *   Index paragraphs/chapters into small floating-point arrays.
+++    *   Map the embeddings to the Room database utilizing an indexing model, allowing users to query concepts instantly offline.
+++
+++### 3. Dynamic "AI Book Club" Co-Pilot
+++Instead of just static background analysis, create a conversational assistant inside the book drawer.
+++*   **Features:**
+++    *   **Contextual Ask-AI:** Highlight any complex sentence/paragraph and select "Ask AI" from the context menu to explain it, simplify it, or translate it.
+++    *   **AI Character / Concept Tracker:** For dense fantasy novels or technical docs, the AI tracks recurring character names or terms and lists details dynamically.
+++    *   **AI Study Buddy (for PDF/Docs):** Generate 5-question multi-choice quizzes based on the chapter the user just read, checking comprehension directly inside the app.
+++
+++---
+++
+++## PHASE J: Offline Dictionary & Spaced-Repetition Vocabulary Builder
+++*Focus: Eliminating internet dependencies for word lookups and adding active learning features.*
+++
+++### 1. Pure-Offline Dictionary Parsing (StarDict / MDict / Custom SQLite)
+++Currently, dictionary search requires `dictionaryapi.dev`. If a user is on an airplane, in the subway, or has disabled Wi-Fi to read undistracted, dictionary lookup fails.
+++*   **The Improvement:** Integrate a highly compressed, pre-packaged offline SQLite dictionary database or support standard StarDict/MDict catalog file imports.
+++*   **How it works:**
+++    *   Offer a lightweight (5-10MB) offline English dictionary database as an optional, lazy-loaded local download.
+++    *   Parse the database in Room to fetch words instantly on double-tap word selection.
+++
+++### 2. Spaced-Repetition Vocabulary Builder (Luminar Cards)
+++*   **The Improvement:** Turn reading into active vocabulary building.
+++*   **How to Build:**
+++    *   When a user looks up a word, add a small "+" button to add it to their "Vocabulary List."
+++    *   Create a simple flashcard review tab in the Library screen based on **SuperMemo-2 (SM2) spaced repetition physics** (the algorithm behind Anki).
+++    *   Prompt the user daily with 5-10 cards they need to review, improving retention and making Luminar a vital tool for language learners and professionals.
+++
+++---
+++
+++## PHASE K: Decentralized Sync & Open Standards
+++*Focus: Resolving the #1 industry-wide pain point—cross-device sync—without proprietary servers.*
+++
+++### 1. Cloud-Agnostic Nextcloud, WebDAV, Drive, and Dropbox Sync
+++Users do not trust proprietary reader clouds, and they hate subscriptions.
+++*   **The Improvement:** Build an encrypted, decentralized sync service.
+++*   **The Solution:**
+++    *   Write a unified backup coordinator that exports a lightweight, highly compressed sync file (`luminar_sync.json.gz`).
+++    *   Let the user connect their own storage provider: **Google Drive**, **Dropbox**, or **any WebDAV provider** (Nextcloud, Synology NAS, pCloud).
+++    *   Sync reading progress, bookmarks, highlights, and custom tags securely without building or hosting a custom server.
+++
+++### 2. Peer-to-Peer local Wi-Fi Sharing (NearShare)
+++*   **The Improvement:** Send books, annotations, and reading progress directly from phone to tablet or friend without using cellular data or the internet.
+++*   **How to Build:**
+++    *   Utilize Android's **Network Service Discovery (NSD)** and a lightweight local Ktor server.
+++    *   When both devices open "Luminar Share" on the same network, they discover each other instantly. Tap to transfer files securely peer-to-peer.
+++
+++### 3. Open Annotation Standards (Obsidian, Notion, Readwise)
+++*   **The Improvement:** Enable users to export their book annotations in clean, beautifully formatted Markdown files structured specifically for obsidian links or database schemas.
+++*   **Features:**
+++    *   **Obsidian / Logseq Export:** Export notes with YAML headers, blockquotes, page links, and chronological dates.
+++    *   **Readwise API Integration:** Add an API connection in Settings to auto-sync highlighted passages to Readwise.
+++
+++---
+++
+++## PHASE L: Core Engine Refinement & SQLite FTS5 Upgrade
+++*Focus: Maximizing parser speeds, rendering accuracy, and database search rankings.*
+++
+++### 1. Room FTS4 to FTS5 Database Migration
+++Currently, Luminar uses FTS4 to guarantee compatibilities with old APIs. 
+++*   **The Refinement:** Safely upgrade Room's full-text search virtual tables to **FTS5**.
+++*   **Why it is safe:** Android 5.0+ (API 21+) supports FTS5. Since Luminar’s minimum supported SDK is 26, FTS5 is natively available on **100%** of your active user devices.
+++*   **The Huge Advantages:**
+++    *   **Relevance Scoring (BM25):** FTS5 supports the BM25 probabilistic relevance algorithm natively. Book search results can be sorted with the most highly matching, relevant passages first, rather than raw sequential order.
+++    *   **Triggers & Optimization:** Substantially cleaner tokenizers and lower storage overhead.
+++
+++### 2. CSS-Aware EPUB Rendering Enhancements
+++The custom `EpubParser` strips HTML/CSS to flatten files into Markdown text streams. While excellent for performance, it strips formatting such as drop-caps, text alignment (centered poetry, right-aligned signatures), and styled quote blocks.
+++*   **The Refinement:** Enhance `EpubParser` to parse basic CSS parameters during XML streaming:
+++    *   Map `text-align: center` → Compose `TextAlign.Center`.
+++    *   Map drop-caps, custom indent margins, and block background highlights into a nested styled block model instead of a raw flat text stream.
+++
+++### 3. Non-Blocking Multithreaded Import (WorkManager Pre-measure)
+++Currently, massive imports or unzipping large EPUBs can cause momentary frames to drop on the UI thread.
+++*   **The Refinement:**
+++    *   Offload all metadata extraction, cover generation, and text tokenization to specialized background threads orchestrated via **WorkManager**.
+++    *   **Pre-heating Layouts:** Pre-render and pre-measure text boundary offsets in a background coroutine before the user opens the book. When they tap a card, the view displays the content in **less than 50 milliseconds**, bypassing the layout pass.
+++
+++---
+++
+++## MARKETING & LAUNCH POSITIONING
+++
+++Luminar’s value proposition is incredibly strong. To stand out on the Google Play Store, emphasize these exact "moats":
+++
+++1.  **"30 Apps in One":** Compare standard readers (supporting ~10 formats) with Luminar's 30+ support. Emphasize that it is the *only* e-reader that natively formats Code (.kt, .py), Spreadsheets (.xlsx, .csv), Presentations (.pptx), Comics (.cbz), and E-books (.epub) differently.
+++2.  **"Your Data is Yours":** Emphasize: *No account registration, no analytics, no external servers, open-source-friendly Markdown annotation exports.*
+++3.  **"Pay Once, Own Forever":** Attack the monthly subscription fatigue. Position Luminar's $4.99 premium tier as an investment that will never badger users with upsells.
+++
+++---
+++
+++## EXECUTION ORDER RECOMMENDATION
+++
+++For maximum impact and development ease, execute the enhancements in this chronological order:
+++
+++| Step | Enhancement | Effort | Impact | Differentiator |
+++|---|---|---|---|---|
+++| **1** | **FTS4 to FTS5 Migration** | Low | High | Instant BM25 search ranking results |
+++| **2** | **TTS Karaoke Sync** | Medium | High | Makes voice reading feel premium |
+++| **3** | **Offline Dictionary (SQLite)** | Medium | High | Fixes the #1 offline reading pain point |
+++| **4** | **Decentralized Sync (WebDAV/Drive)** | High | Critical | Solves multi-device usage completely |
+++| **5** | **On-Device LLM (Gemini Nano)** | High | Extremely High | Futuristic AI integration, 100% private |
++diff --git a/docs/READING_ENGINE_BIRTH_DEFECTS_AUDIT.md b/docs/READING_ENGINE_BIRTH_DEFECTS_AUDIT.md
++new file mode 100644
++index 0000000..4ae44dc
++--- /dev/null
+++++ b/docs/READING_ENGINE_BIRTH_DEFECTS_AUDIT.md
++@@ -0,0 +1,126 @@
+++# Luminar Reader — Reading Engine & Document Parser Audit ("Birth Defects" Scan)
+++
+++*Conducted on: July 14, 2026*
+++*Target: Transitioning the core document parser (DocumentParser.kt) from prototype hacks to robust SSS+ engineering*
+++
+++---
+++
+++## Executive Summary
+++
+++A deep code-level scan of the reading engine (`DocumentParser.kt`, `EpubParser.kt`, and `TextReaderView.kt`) reveals why the reader currently feels unstable or "buggy." 
+++
+++To maintain the "zero external binary dependencies" rule, the engine utilizes custom Regular Expressions to parse complex XML document formats (`DOCX`, `XLSX`, `PPTX`, `FB2`, `XPS`). While creative, parsing relational XML structures with linear regex is highly fragile.
+++
+++The scan has isolated **five critical "birth defects"** in the parsing engine. These cause severe multilingual rendering crashes, completely break PPTX slide extraction, swallow HTML files into raw source tag logs, and dump binary garbage for compressed help files (`CHM`).
+++
+++Resolving these issues is the single most important step to achieving an **SSS+ Reading Experience**.
+++
+++---
+++
+++## 🚨 THE 5 ENGINE BIRTH DEFECTS
+++
+++### 1. The Multilingual Silent Failure in Office Docs (`DOCX`, `XLSX`, `PPTX`, `XPS`)
+++*   **Where it lives:** `DocumentParser.kt` (`decodeXmlEntities` vs `decodeHtmlEntities`)
+++*   **The Bug:** 
+++    Your Office doc parsers pass text runs through `decodeXmlEntities(text)`. However, `decodeXmlEntities` **does not support decimal or hexadecimal numeric XML entities**:
+++    ```kotlin
+++    private fun decodeXmlEntities(text: String): String {
+++        return text
+++            .replace("&lt;", "<")
+++            .replace("&gt;", ">")
+++            .replace("&quot;", "\"")
+++            .replace("&apos;", "'")
+++            .replace("&#39;", "'")
+++            .replace("&amp;", "&") // MUST be last
+++    }
+++    ```
+++*   **Why it is catastrophic:** 
+++    Microsoft Office applications frequently encode non-ASCII characters—including Chinese, Japanese, Arabic, Cyrillic, math symbols, curly quotes (`&#x201c;`/`&#x201d;`), and em-dashes—as decimal (`&#20013;`) or hexadecimal (`&#x4e2d;`) entities.
+++    Because your decoder completely ignores these, **non-English documents and technical papers will render as an ugly, unreadable soup of raw codes (e.g. `&#20013;&#22269;`).**
+++*   **The Plan to Fix (SSS+):** 
+++    Swap out `decodeXmlEntities` entirely. Force DOCX, XLSX, and PPTX parsers to use `decodeHtmlEntities` (which already has robust regex handlers for numeric and hex unicode decoding).
+++
+++---
+++
+++### 2. Pure HTML Page Import Displays Raw Source Code
+++*   **Where it lives:** `BookFormat.kt` (extension mapping) & `TextReaderView.kt` (`parseTextBlocks`)
+++*   **The Bug:** 
+++    Luminar successfully imports `.html` or `.htm` files as `BookFormat.HTML`. However, in `TextReaderView.kt`'s `parseTextBlocks()`, HTML is not included in the `isCode` flag. It falls through to the plain text paragraph line-splitter:
+++    ```kotlin
+++    val isCode = format == BookFormat.CODE || format == BookFormat.JSON || format == BookFormat.XML
+++    // HTML is skipped, falls to else plain-text parser!
+++    ```
+++*   **Why it is catastrophic:** 
+++    The reader does not parse the HTML structure. It displays the **raw, unformatted source HTML code** (complete with `<html>`, `<head>`, `<style>`, `<div class="...">`, `<script>`, etc.) directly to the user as plain text paragraphs.
+++*   **The Plan to Fix (SSS+):** 
+++    1. Inside `DocumentParser.kt`'s `parseToTextUnsafe`, intercept the html extension:
+++       ```kotlin
+++       "html", "htm", "xhtml" -> stripHtmlToMarkdown(file.readText(Charsets.UTF_8))
+++       ```
+++    2. Your existing `stripHtmlToMarkdown` method is highly robust. By routing HTML through it on import, HTML files will instantly display as clean, structured, and beautiful Markdown paragraphs in `TextReaderView`!
+++
+++---
+++
+++### 3. PPTX Slides Swallow Spaced/Preserved Paragraphs Entirely
+++*   **Where it lives:** `DocumentParser.kt` (around line 396)
+++*   **The Bug:** 
+++    PowerPoint slide text runs are extracted using this strict regex:
+++    ```kotlin
+++    val textRegex = Regex("<a:t>(.*?)</a:t>", RegexOption.DOT_MATCHES_ALL)
+++    ```
+++    In the Microsoft OpenXML specification, PowerPoint slides frequently save text runs with whitespace preservation attributes, rendering the tag as `<a:t xml:space="preserve">text</a:t>` whenever leading or trailing spaces are involved.
+++*   **Why it is catastrophic:** 
+++    Because your regex requires *exactly* `<a:t>` with no attributes, **any slide text utilizing space preservation fails to match and is silently swallowed.** The user will open their presentation and find entire slides or major text blocks completely missing.
+++*   **The Plan to Fix (SSS+):** 
+++    Align the PPTX regex with the robust pattern you already use in your DOCX parser. Upgrade `textRegex` to allow wildcard namespaces and attributes:
+++    ```kotlin
+++    val textRegex = Regex("<a:t[^>]*>([\\s\\S]*?)</a:t>", RegexOption.DOT_MATCHES_ALL)
+++    ```
+++
+++---
+++
+++### 4. The Illusion of CHM Help File Parsing (Garbled Binary Matches)
+++*   **Where it lives:** `DocumentParser.kt` (around line 850)
+++*   **The Bug:** 
+++    Microsoft's Compiled HTML Help (`CHM`) format is actually a complex, multi-directory binary filesystem database (ITSS format).
+++    To parse it without external native libraries, your code reads the raw binary CHM file as an ISO_8859_1 String and runs a plain-text regex on it:
+++    ```kotlin
+++    val text = String(bytes, Charsets.ISO_8859_1)
+++    val bodyRegex = Regex("<body[^>]*>([\\s\\S]*?)</body>", RegexOption.IGNORE_CASE)
+++    ```
+++*   **Why it is catastrophic:** 
+++    Real-world CHM files compress their embedded HTML files using the proprietary Microsoft LZX algorithm. Running a plain-text regex directly over raw, LZX-scrambled binary bytes **matches absolutely nothing**.
+++    The parser will either fail silently, return a blank screen, or fall back to dumping garbled, non-printable binary strings (`extractTextFromBinary`), making the text look like scrambled cipher garbage.
+++*   **The Plan to Fix (SSS+):** 
+++    Since writing a complete LZX/ITSS decompressor in pure Kotlin is extremely heavy, protect your launch:
+++    *   Intercept `.chm` imports with a clean "Best-Effort decompressor" system warning dialog.
+++    *   Advise the user that CHM is a legacy, proprietary Windows format and provide a highly useful step-by-step tip on how to convert CHM → EPUB/PDF using [Calibre] directly before reading.
+++
+++---
+++
+++### 5. Multilingual Localized Headings Ignored in Word Documents (`DOCX`)
+++*   **Where it lives:** `DocumentParser.kt` (around line 23)
+++*   **The Bug:** 
+++    Word headings are detected using this strict regex:
+++    ```kotlin
+++    val HEADING_STYLE = Regex("""<w:pStyle\s+w:val="Heading(\d)"""")
+++    ```
+++*   **Why it is catastrophic:** 
+++    Word Heading style names are localized by Microsoft Word based on the document creator's system language. In French Word, headings are saved as `w:val="Titre1"`; in German, they are saved as `w:val="Überschrift1"`.
+++    Because your regex expects the exact English word `"Heading"`, **any Word document created on a non-English machine loses all heading sizes and renders them as standard paragraphs**, destroying document readability.
+++*   **The Plan to Fix (SSS+):** 
+++    Map Word paragraph heading styles by cross-referencing heading level properties (`w:outlineLvl`) instead of relying on the localized style name string, ensuring 100% accurate document structures regardless of language.
+++
+++---
+++
+++## 🛠️ THE SSS+ ENGINE ACTION MATRIX
+++
+++To take your reading engine from a "prototype feeling" to a bulletproof, commercial-grade product, execute these non-coding structural changes in your next dev pass:
+++
+++| Priority | Birth Defect | Complexity | User Impact | Fix Difficulty |
+++|---|---|---|---|---|
+++| **1** | **Office Multilingual Entities (Bug 1)** | Low | High | **Extremely Easy** (Swap `decodeXmlEntities` to `decodeHtmlEntities`) |
+++| **2** | **HTML Raw Source Clutter (Bug 2)** | Low | High | **Easy** (Route `.html` imports through `stripHtmlToMarkdown`) |
+++| **3** | **PPTX Swallowed Paragraphs (Bug 3)** | Low | High | **Extremely Easy** (Upgrade `<a:t>` regex to `<a:t[^>]*>`) |
+++| **4** | **DOCX Non-English Headings (Bug 5)** | Medium | Medium | **Medium** (Match `w:outlineLvl` tag instead of localized title) |
+++| **5** | **CHM Compression Block (Bug 4)** | High | Medium | **Easy** (Add conversion guidance dialog on import) |
++diff --git a/docs/UI_UX_IRREGULARITIES_AUDIT.md b/docs/UI_UX_IRREGULARITIES_AUDIT.md
++new file mode 100644
++index 0000000..59bbc5c
++--- /dev/null
+++++ b/docs/UI_UX_IRREGULARITIES_AUDIT.md
++@@ -0,0 +1,117 @@
+++# Luminar Reader — UI/UX Irregularities & Performance Audit
+++
+++*Conducted on: July 14, 2026*
+++*Target: Resolution of hidden visual, functional, and performance anomalies before release*
+++
+++---
+++
+++## Executive Summary
+++
+++While Luminar Reader has a highly premium feature list and follows Clean Architecture, a deep code-level audit of your presentation layer reveals **six major irregularities**. These anomalies currently block core features from working, cause visual clashes in Light Mode, and trigger severe UI stuttering (jank) in comic reading.
+++
+++Addressing these issues is critical to ensure that your first public testers experience a fluid, high-fidelity app rather than a "broken prototype."
+++
+++This audit isolates each issue, shows the exact file/lines where they live, and provides a clear, zero-coding **action plan** to resolve them.
+++
+++---
+++
+++## 🚨 THE 6 CRITICAL IRREGULARITIES
+++
+++### 1. The Table of Contents is Visually complete but Fully Non-Functional
+++*   **The Code:** `ReaderScreen.kt` (around line 614)
+++*   **The Issue:** 
+++    ```kotlin
+++    onClick = {
+++        showToc = false
+++        // TODO: Jump to chapter block index
+++        onInteraction()
+++    }
+++    ```
+++    The Table of Contents dropdown displays beautiful chapter titles, but clicking any of them does absolutely nothing. The click simply closes the drawer.
+++*   **Why it hurts UX:** Users opening an EPUB or document expect to jump directly to a chapter. Tapping a chapter and having nothing happen makes the app feel completely broken.
+++*   **The Plan to Fix:**
+++    1. Define a `ReaderEvent.GoToChapter(chapterIndex: Int)` event in `ReaderViewModel.kt`.
+++    2. When clicked, have the ViewModel search your parsed `blockTexts` for the level-1 Markdown header (`# Chapter Title`) matching that chapter.
+++    3. Update the `scrollToBlockIndex` state. This will trigger the Compose `LaunchedEffect(scrollToBlockIndex)` inside `TextReaderView.kt` which animates the scroll directly to that block.
+++
+++---
+++
+++### 2. Main-Thread Synchronous Image Decoding in Comic Mode (Severe Paging Jank)
+++*   **The Code:** `ComicReaderView.kt` (around line 98)
+++*   **The Issue:** 
+++    ```kotlin
+++    val bitmap = remember(comicFile.absolutePath, entryPath) {
+++        runCatching {
+++            val bytes = getImageBytes(comicFile, entryPath)
+++            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+++        }.getOrNull()
+++    }
+++    ```
+++    `getImageBytes` is a synchronous file system ZIP-extraction call. This, along with `BitmapFactory.decodeByteArray`, is executed **synchronously on the Main Thread (UI Thread)** inside a Compose `remember` block.
+++*   **Why it hurts UX:** Unzipping and decoding high-resolution JPEGs can take 150ms–300ms. Running this on the main thread freezes the UI during swipes, creating severe lag and dropping frames.
+++*   **The Plan to Fix:**
+++    1. Shift image loading and bitmap decoding into a background coroutine using `produceState` or a `LaunchedEffect`.
+++    2. Display a sub-loading shimmer for the single card while decoding, keeping the main `HorizontalPager` container buttery-smooth (60–120 FPS).
+++    3. Implement a simple 3-page bitmap cache (Current, Previous, Next) and recycle off-screen bitmaps to prevent memory spikes.
+++
+++---
+++
+++### 3. Dead Progress Bar & Locked Chapter Label in Text Reader (EPUB, TXT, DOCX, Code)
+++*   **The Code:** `ReaderScreen.kt:356`, `ReaderViewModel.kt:642`
+++*   **The Issue:** 
+++    The gold Kindle-style `ReadingProgressBar` at the bottom of the screen relies on `uiState.currentPage` and `uiState.totalPages`. However, as the user scrolls through any text-based format, `onScrollPositionChanged(position)` only updates `scrollPosition`. It **never recalculates the current page or active chapter index.**
+++*   **Why it hurts UX:** 
+++    *   The reading progress bar stays locked at `0%` forever during scroll.
+++    *   The reader title bar displays "Ch. 1 of 12" even if the user scrolls all the way to the end of the book.
+++*   **The Plan to Fix:**
+++    1. Since text-based files are split into parsed text blocks, the ViewModel should calculate chapter boundaries by scanning blocks for `# Chapter Title` markers.
+++    2. When `onScrollPositionChanged(firstVisibleBlockIndex)` is triggered, the ViewModel must check which chapter boundary range the block falls into.
+++    3. Automatically update `uiState.currentPage` and `uiState.currentChapterIndex` to the correct scrolling values, bringing the progress bar and chapter indicators to life.
+++
+++---
+++
+++### 4. Eviction of Text-To-Speech (TTS) During Background Multitasking
+++*   **The Code:** `TtsController.kt`
+++*   **The Issue:** 
+++    `TtsController` is a singleton utilizing the Android application context, but it has no connection to an Android `Foreground Service` or `MediaSession`.
+++*   **Why it hurts UX:** If a user locks their screen or switches apps to multitask while listening to a book, the Android OS will quickly flag the application process as inactive and evict it from memory, abruptly stopping the spoken audio.
+++*   **The Plan to Fix:**
+++    1. Bind `TtsController` actions to a background-running Android `Foreground Service` (`TtsService`).
+++    2. Render a system notification with media controls (Play, Pause, Skip, Stop). This guarantees background audio play and lets users control playback from the lock screen.
+++
+++---
+++
+++### 5. Jarring Visual Clash of Cover Placeholders in Light Theme
+++*   **The Code:** `LibraryScreen.kt` (around lines 1100–1110)
+++*   **The Issue:** 
+++    Books without an embedded cover image utilize `CoverPlaceholder`, which features a hardcoded dark-gold and near-black gradient background (`Color(0xFF111111)`, `Color(0xFF3B3014)`).
+++*   **Why it hurts UX:** While this looks highly premium in AMOLED Dark Mode, when the user switches to Light Theme, these massive near-black rectangles create a jarring, visually aggressive smear in the middle of a clean, light grid.
+++*   **The Plan to Fix:**
+++    1. Make `CoverPlaceholder` theme-aware.
+++    2. In Light Mode, swap the near-black background for a warm, light gold-tinted paper background, soft gray gradients, and charcoal-colored lettering, maintaining cohesive lightness.
+++
+++---
+++
+++### 6. Missing Pinch-To-Zoom and Double-Tap Gestures in PDF Reader
+++*   **The Code:** `ReaderScreen.kt` (around lines 368–375, `PdfReaderView`)
+++*   **The Issue:** 
+++    Your custom PDF viewer uses `mhiew` Android PDF Viewer wrapped in a Compose `AndroidView`, but it does not enable or handle pinch-to-zoom or double-tap zoom scales in its native configuration b
+\ No newline at end of file

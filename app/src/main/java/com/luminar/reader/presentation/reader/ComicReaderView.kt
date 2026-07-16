@@ -18,6 +18,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.produceState
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -103,6 +106,12 @@ fun ComicReaderView(
     }
 }
 
+sealed interface ComicLoadState {
+    object Loading : ComicLoadState
+    data class Success(val bitmap: android.graphics.Bitmap) : ComicLoadState
+    object Error : ComicLoadState
+}
+
 @Composable
 private fun ComicPage(
     comicFile: File,
@@ -110,11 +119,16 @@ private fun ComicPage(
     onTap: () -> Unit,
     getImageBytes: (File, String) -> ByteArray
 ) {
-    val bitmap = remember(comicFile.absolutePath, entryPath) {
-        runCatching {
-            val bytes = getImageBytes(comicFile, entryPath)
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-        }.getOrNull()
+    val loadState = produceState<ComicLoadState>(initialValue = ComicLoadState.Loading, comicFile.absolutePath, entryPath) {
+        value = withContext(Dispatchers.IO) {
+            runCatching {
+                val bytes = getImageBytes(comicFile, entryPath)
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            }.fold(
+                onSuccess = { bmp -> if (bmp != null) ComicLoadState.Success(bmp) else ComicLoadState.Error },
+                onFailure = { ComicLoadState.Error }
+            )
+        }
     }
 
     var scale by remember { mutableFloatStateOf(1f) }
@@ -142,26 +156,34 @@ private fun ComicPage(
             },
         contentAlignment = Alignment.Center
     ) {
-        if (bitmap != null) {
-            Image(
-                bitmap = bitmap.asImageBitmap(),
-                contentDescription = "Comic page",
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer(
-                        scaleX = scale,
-                        scaleY = scale,
-                        translationX = offsetX,
-                        translationY = offsetY
-                    ),
-                contentScale = ContentScale.Fit
-            )
-        } else {
-            Text(
-                text = "Unable to load page",
-                color = Color.White.copy(alpha = 0.5f),
-                fontSize = 14.sp
-            )
+        when (val state = loadState.value) {
+            ComicLoadState.Loading -> {
+                androidx.compose.material3.CircularProgressIndicator(
+                    color = com.luminar.reader.presentation.theme.LuminarGold.copy(alpha = 0.5f)
+                )
+            }
+            is ComicLoadState.Success -> {
+                Image(
+                    bitmap = state.bitmap.asImageBitmap(),
+                    contentDescription = "Comic page",
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer(
+                            scaleX = scale,
+                            scaleY = scale,
+                            translationX = offsetX,
+                            translationY = offsetY
+                        ),
+                    contentScale = ContentScale.Fit
+                )
+            }
+            ComicLoadState.Error -> {
+                Text(
+                    text = "Unable to load page",
+                    color = Color.White.copy(alpha = 0.5f),
+                    fontSize = 14.sp
+                )
+            }
         }
     }
 }

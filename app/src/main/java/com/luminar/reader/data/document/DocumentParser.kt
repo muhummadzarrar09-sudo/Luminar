@@ -95,6 +95,7 @@ class DocumentParser @Inject constructor() {
             "cbr" -> "# CBR Comic Book\n\nThis file uses RAR compression which requires a proprietary library.\n\n**How to read it:**\n1. Rename the file from `.cbr` to `.rar`\n2. Extract it with a RAR tool\n3. Re-compress the folder as `.zip`\n4. Rename the `.zip` to `.cbz`\n5. Import the `.cbz` file into Luminar\n\nAlternatively, use [Calibre](https://calibre-ebook.com) to convert CBR → CBZ."
             "cbt" -> "# CBT Comic Book\n\nThis file uses TAR archiving.\n\n**How to read it:**\n1. Extract the `.cbt` file using a TAR tool\n2. Re-compress the images folder as `.zip`\n3. Rename the `.zip` to `.cbz`\n4. Import the `.cbz` file into Luminar"
             "djvu", "djv" -> "# DjVu Document\n\nDjVu is a specialized image-based format that requires a native rendering library.\n\n**How to read it:**\n- Convert to PDF using an online DjVu-to-PDF converter\n- Or use [DjView](https://djvu.sourceforge.net) on desktop\n- Then import the PDF into Luminar"
+            "html", "htm", "xhtml" -> stripHtmlToMarkdown(file.readText(Charsets.UTF_8))
             else -> file.readText(Charsets.UTF_8)
         }
     }
@@ -166,9 +167,20 @@ class DocumentParser @Inject constructor() {
         for (pMatch in PARAGRAPH.findAll(processedXml)) {
             val paragraph = pMatch.value
 
-            // Check for heading style
-            val headingLevel = HEADING_STYLE
-                .find(paragraph)?.groupValues?.get(1)?.toIntOrNull()
+            val hasPageBreak = paragraph.contains("<w:br w:type=\"page\"") ||
+                paragraph.contains("<w:lastRenderedPageBreak")
+            val hasBorder = paragraph.contains("<w:pBdr>")
+
+            if (hasPageBreak || hasBorder) {
+                if (sb.isNotEmpty()) {
+                    sb.appendLine("---")
+                    sb.appendLine()
+                }
+            }
+
+            // Check for heading style (by localized name or outline level)
+            val headingLevel = HEADING_STYLE.find(paragraph)?.groupValues?.get(1)?.toIntOrNull()
+                ?: Regex("""<w:outlineLvl\s+w:val="(\d)"""").find(paragraph)?.groupValues?.get(1)?.toIntOrNull()?.plus(1)
 
             // Check for list (numbered or bullet)
             val isListItem = paragraph.contains("<w:numPr")
@@ -998,6 +1010,7 @@ class DocumentParser @Inject constructor() {
         }
 
         text = BR_TAG.replace(text, "\n")
+        text = text.replace(Regex("<hr[^>]*>", RegexOption.IGNORE_CASE), "\n\n---\n\n")
         text = CLOSE_P.replace(text, "\n\n")
         text = CLOSE_DIV.replace(text, "\n")
         text = LI_OPEN.replace(text, "\n- ")
@@ -1019,13 +1032,7 @@ class DocumentParser @Inject constructor() {
      * MUST decode &amp; LAST to avoid double-decoding (e.g. &amp;lt; → &lt; → <).
      */
     private fun decodeXmlEntities(text: String): String {
-        return text
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&quot;", "\"")
-            .replace("&apos;", "'")
-            .replace("&#39;", "'")
-            .replace("&amp;", "&") // MUST be last
+        return decodeHtmlEntities(text)
     }
 
     private fun decodeHtmlEntities(text: String): String {

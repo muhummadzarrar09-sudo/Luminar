@@ -35,6 +35,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.luminar.reader.R
@@ -244,6 +245,25 @@ fun SettingsScreen(
             }
 
             item {
+                SectionHeader(text = "PREMIUM DESIGN THEME PRESETS (v2.0 PREVIEW)")
+            }
+
+            item {
+                PreferenceGroup {
+                    designPresetsList.forEachIndexed { idx, preset ->
+                        PresetOptionRow(
+                            title = preset.title,
+                            subtitle = preset.subtitle,
+                            premium = true
+                        )
+                        if (idx < designPresetsList.lastIndex) {
+                            PreferenceDivider()
+                        }
+                    }
+                }
+            }
+
+            item {
                 SectionHeader(text = "ABOUT")
             }
 
@@ -448,9 +468,76 @@ private fun formatReadingTime(minutes: Long): String {
 }
 
 @Composable
+private fun PresetOptionRow(
+    title: String,
+    subtitle: String,
+    premium: Boolean
+) {
+    ListItem(
+        headlineContent = { Text(text = title, fontWeight = FontWeight.Medium) },
+        supportingContent = { Text(text = subtitle) },
+        trailingContent = {
+            if (premium) {
+                Surface(
+                    color = LuminarGold.copy(alpha = 0.15f),
+                    contentColor = LuminarGold,
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = "PREMIUM",
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            }
+        },
+        colors = ListItemDefaults.colors(
+            containerColor = Color.Transparent
+        )
+    )
+}
+
+@Composable
 private fun PreferenceDivider() {
     HorizontalDivider(
         modifier = Modifier.padding(start = 16.dp),
         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
     )
 }
+
+private data class DesignPreset(val title: String, val subtitle: String)
+
+private val designPresetsList = listOf(
+    DesignPreset("Skeuomorphism", "Early iOS tactile 3D leather calendars & wooden shelves"),
+    DesignPreset("Flat design", "Solid colors and simple shapes with zero gradients or shadows"),
+    DesignPreset("Material Design", "Flat layers with subtle depth shadows simulating paper sheets"),
+    DesignPreset("Neumorphism (soft UI)", "Extruded monochrome surfaces with soft volumetric shadows"),
+    DesignPreset("Glassmorphism", "Frosted glass overlays with blur, transparency, and borders"),
+    DesignPreset("Claymorphism", "Puffy, rounded clay-like shapes with soft volumetric shadows"),
+    DesignPreset("Minimalism", "Stripped down to essentials, heavy white space, clean typography"),
+    DesignPreset("Brutalism / Neubrutalism", "Raw typography, thick black borders, and clashing bold colors"),
+    DesignPreset("Maximalism", "Dense layouts, bold colors, layered textures, and high visual density"),
+    DesignPreset("Swiss / International Typographic Style", "Grid-based layouts, sans-serif typography, and strong hierarchy"),
+    DesignPreset("Retro / Vaporwave / Y2K", "Nostalgic pixel art, chrome text, glitch effects, and neon gradients"),
+    DesignPreset("Cyberpunk / Neon UI", "OLED black backgrounds with glowing neon-line accents"),
+    DesignPreset("Bento grid design", "Modular, rounded grid boxes organized like Apple product slides"),
+    DesignPreset("Dark mode / Monochrome", "Near-black backgrounds with limited accents to reduce eye strain"),
+    DesignPreset("Aurora / Mesh gradient design", "Soft, blurred, colorful gradient blobs as fluid backgrounds"),
+    DesignPreset("Paper UI / Papercraft", "Layered cutout shapes simulating stacked sheets of real paper"),
+    DesignPreset("Editorial / Print-inspired web", "Magazine layouts: serif headlines, column grids, and pull quotes"),
+    DesignPreset("Riso (Risograph) style", "Grainy, slightly misaligned color layers resembling screen-printing"),
+    DesignPreset("Newsprint UI", "Off-white cream backgrounds, halftone dot textures, and news serif"),
+    DesignPreset("Parchment / Vellum", "Warm cream tones, subtle paper-grain textures, and soft aged edges"),
+    DesignPreset("Slate / Charcoal minimalism", "Calmer dark grey-blue backgrounds with muted accent colors"),
+    DesignPreset("Concrete / Stone UI", "Subtle noise texture on cards resembling raw concrete and slate"),
+    DesignPreset("Linen / Fabric texture", "Soft woven woven-fabric textures used in classic macOS notes"),
+    DesignPreset("Chalkboard / Blackboard UI", "Dark slate-green background with chalk-style sketchy typography"),
+    DesignPreset("Blueprint UI", "Navy background with white grid lines and technical-drawing icons"),
+    DesignPreset("Notebook / Sketch UI", "Lined paper backgrounds, handwritten-style fonts, and doodle icons"),
+    DesignPreset("Terrazzo", "Speckled multi-color stone pattern as accent blocks"),
+    DesignPreset("Cork board UI", "Textured tan cork background with pinned cards and post-it notes"),
+    DesignPreset("Grain/Noise minimalism", "Clean flat layout with a subtle film-grain texture overlay"),
+    DesignPreset("Frosted stone / Matte slate cards", "Textured matte slate-grey finish with soft inset shadows")
+)

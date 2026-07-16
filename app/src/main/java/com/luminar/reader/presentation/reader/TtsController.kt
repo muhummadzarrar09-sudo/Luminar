@@ -79,12 +79,14 @@ class TtsController @Inject constructor(
                             speakChunk(currentIndex)
                         } else {
                             _state.update { it.copy(isSpeaking = false, currentChunkIndex = 0) }
+                            TtsService.stop(context)
                         }
                     }
 
                     @Deprecated("Deprecated in API")
                     override fun onError(utteranceId: String?) {
                         _state.update { it.copy(isSpeaking = false) }
+                        TtsService.stop(context)
                     }
                 })
             }
@@ -112,17 +114,20 @@ class TtsController @Inject constructor(
 
         if (chunks.isNotEmpty()) {
             speakChunk(currentIndex)
+            TtsService.start(context)
         }
     }
 
     fun pause() {
         tts?.stop()
         _state.update { it.copy(isSpeaking = false) }
+        TtsService.stop(context)
     }
 
     fun resume() {
         if (chunks.isNotEmpty() && currentIndex < chunks.size) {
             speakChunk(currentIndex)
+            TtsService.start(context)
         }
     }
 
@@ -131,6 +136,7 @@ class TtsController @Inject constructor(
         currentIndex = 0
         chunks = emptyList()
         _state.update { it.copy(isSpeaking = false, currentChunkIndex = 0, totalChunks = 0) }
+        TtsService.stop(context)
     }
 
     fun skipForward() {
