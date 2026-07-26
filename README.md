@@ -1,10 +1,12 @@
-# Luminar
+# Recto
+
+**The page you're on.**
 
 A Kindle-class ebook reader for Android. Read PDF, EPUB, DOCX and more on your own
-phone — offline, free, no account required.
+phone — offline, free, no account, no ads, no tracking.
 
-> **Status: clean slate.** This repository was reset on 2026-07-26. There is no code
-> yet, by design. The current deliverable is the plan in [`docs/BRAINSTORM.md`](docs/BRAINSTORM.md).
+> **Status: planning.** The repo was reset to a clean slate on 2026-07-26. There is no
+> application code yet, by design. Start with [`docs/BRAINSTORM.md`](docs/BRAINSTORM.md).
 
 ---
 
@@ -13,50 +15,75 @@ phone — offline, free, no account required.
 | | |
 |---|---|
 | **Platform** | Android native — Kotlin + Jetpack Compose |
-| **Distribution** | Sideloaded APK on your own phone (Play Store optional, later) |
-| **Cost** | Free. No subscriptions, no ads, no accounts. |
+| **Distribution** | Sideloaded APK. Built for one phone, shareable with anyone who asks. |
+| **Cost** | Free. MIT licensed. No subscriptions, no ads, no accounts, no telemetry. |
 | **Books in** | Your own files + free public-domain catalogs (Project Gutenberg, Standard Ebooks, any OPDS feed) |
 | **Formats** | EPUB, PDF, DOCX, MOBI/AZW3 (DRM-free), TXT, MD, HTML, RTF, FB2, CBZ/CBR |
-| **Offline** | Everything works with the radio off. Network is only for downloading books. |
+| **Offline** | Everything works in airplane mode. Network is only for fetching new books. |
+
+**Not in scope:** DRM removal, Amazon account login, Kindle Store purchases. This is a
+clone of the Kindle *reading experience*, not of Amazon's *content pipeline*. Every
+supported format is DRM-free or public domain.
 
 ## Documentation
 
-- **[docs/BRAINSTORM.md](docs/BRAINSTORM.md)** — the full plan: Kindle feature teardown,
-  architecture, library choices, phased roadmap, risks, open questions. **Start here.**
+| Doc | What's in it |
+|---|---|
+| **[docs/BRAINSTORM.md](docs/BRAINSTORM.md)** | The plan. Kindle feature teardown, architecture, format strategy, notification design, UI, 9-phase roadmap, risks. **Read this first.** |
+| [docs/NAMING.md](docs/NAMING.md) | Why "Recto", and the names that were rejected (and why "Luminar" had to go) |
+| [docs/ICEBOX.md](docs/ICEBOX.md) | Deferred and explicitly rejected scope — the anti-scope-creep contract |
+
+## Roadmap at a glance
+
+| Phase | Delivers |
+|---|---|
+| 0 | Project skeleton, CI, design system, installable blank APK |
+| 1 | Read an EPUB end to end — import, library, reader, saved position |
+| 2 | Kindle feel — typography, 4 themes, page-turn animations, time-left |
+| 3 | PDF + every other format via the convert-to-EPUB pipeline |
+| 4 | Highlights, notes, bookmarks, notebook export, full-text search |
+| 5 | Notifications, streaks, goals, stats, widget |
+| 6 | In-app free book catalogs + download manager |
+| 7 | TTS read-aloud, offline dictionary, X-Ray |
+| 8 | Backup/sync, tablet layout, perf + a11y pass, signed release |
+
+Phases 0–2 (~5 weeks of evenings) already produce a daily driver.
+
+## Build
+
+Nothing to build yet. Once Phase 0 lands:
+
+```bash
+./gradlew assembleDebug
+adb install app/build/outputs/apk/debug/app-debug.apk
+```
+
+Requires JDK 17 and Android SDK 36. **Note:** the project is authored in an environment
+without a JDK or Android SDK, so the first real compile happens on your machine —
+expect to fix a version pin or two on the first run.
 
 ## The previous app
 
 This repo previously held *Luminar Reader*, a working-but-tangled Android e-reader
-(≈55 Kotlin/resource files, 46 planning docs, an Ollama LLM integration, and a
-190 KB stray patch file). Nothing is lost — it is preserved in git history:
+(~55 Kotlin/resource files, 46 planning docs, an Ollama LLM integration, and a stray
+190 KB patch file). Nothing was lost — it's preserved in git history:
 
 ```bash
-# browse the old tree
-git show archive/luminar-v1 --stat
-git ls-tree -r archive/luminar-v1 --name-only
-
-# read a single old file without restoring it
-git show archive/luminar-v1:docs/COMPETITOR_RESEARCH.md
-git show archive/luminar-v1:app/src/main/java/com/luminar/reader/data/epub/EpubParser.kt
-
-# restore one file into the new tree
-git checkout archive/luminar-v1 -- docs/FORMAT_AUDIT.md
-
-# restore the entire old app
-git checkout archive/luminar-v1 -- .
+git show archive/luminar-v1 --stat                    # browse the old tree
+git show archive/luminar-v1:docs/COMPETITOR_RESEARCH.md   # read one old file
+git checkout archive/luminar-v1 -- docs/FORMAT_AUDIT.md   # restore one file
+git checkout archive/luminar-v1 -- .                  # restore the whole old app
 ```
 
-The old commit is `70e8239`. The tag `archive/luminar-v1` points at it.
-Push the tag if you want it on GitHub: `git push origin archive/luminar-v1`.
+Old commit: `70e8239`, tagged `archive/luminar-v1` (pushed to GitHub).
 
-## Why the reset
-
-The old codebase carried a lot of accumulated drift — a scope that wandered into
-spreadsheet and IDE "rendering modes", an on-device LLM dependency, 46 overlapping
-phase documents, and a reading engine whose own audit doc was titled
-*"Birth Defects"*. Rebuilding on a proven ebook engine (Readium) instead of a
-hand-rolled parser is faster than untangling it.
+**Why the reset:** the old codebase had drifted into spreadsheet and IDE "rendering
+modes", depended on a local LLM server, spread its plan across 46 overlapping phase
+docs, and had a hand-rolled EPUB parser whose own audit document was titled
+*"Birth Defects"*. Rebuilding on Readium — the toolkit behind 100+ shipping reading
+apps — is faster than untangling that.
 
 ## License
 
-TBD — see open questions in the brainstorm.
+[MIT](LICENSE) © 2026. Readium (BSD-3) and the bundled fonts (OFL/Apache-2.0) carry
+their own compatible licenses.

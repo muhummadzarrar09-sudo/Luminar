@@ -1,4 +1,4 @@
-# Icebox
+# Icebox — Recto
 
 Ideas that are deliberately **not** in the v1 plan. Scope creep killed the previous
 version of this app — anything that isn't in the feature table of `BRAINSTORM.md` §2

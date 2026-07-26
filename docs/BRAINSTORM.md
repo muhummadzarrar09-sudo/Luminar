@@ -1,14 +1,21 @@
-# Luminar — Kindle Clone: Brainstorm & Plan
+# Recto — Kindle Clone: Brainstorm & Plan
 
 **Date:** 2026-07-26
 **Status:** Planning only. No code written yet — this document is the deliverable.
-**Decisions locked:** Android native (Kotlin + Compose) · offline-first + in-app free book sources · clean slate (old app archived at tag `archive/luminar-v1`)
+
+**Decisions locked:**
+- **Name:** Recto · package `dev.recto.reader` (see [NAMING.md](NAMING.md))
+- **Platform:** Android native, Kotlin + Jetpack Compose
+- **Scope:** offline-first, plus in-app free public-domain book catalogs
+- **Distribution:** sideloaded APK — personal use, shareable with anyone who asks
+- **License:** MIT
+- **History:** clean slate; old app archived at tag `archive/luminar-v1`
 
 ---
 
 ## 1. The one-paragraph pitch
 
-Luminar is a Kindle for people who own their files. You point it at a PDF, EPUB, DOCX
+Recto is a Kindle for people who own their files. You point it at a PDF, EPUB, DOCX
 or a dozen other formats and get the full Kindle experience — paginated typography,
 highlights, notes, dictionary lookup, X-Ray-style character lists, reading streaks,
 sync of your place across devices, TTS read-aloud, and reading-reminder notifications —
@@ -91,7 +98,7 @@ sorted by whether it earns a place in v1.
 | Feature | Notes | Priority |
 |---|---|---|
 | Whispersync — furthest page read, across devices | v1: export/import a JSON backup. v2: sync via the user's own Google Drive / WebDAV / Nextcloud app-folder. No server of mine to run. | **P1 → P2** |
-| Send-to-Luminar by email | Needs a server. | **Cut for v1** |
+| Send-to-Recto by email | Needs a server. | **Cut for v1** |
 | Cloud library | Same. | **Cut for v1** |
 | Full local backup/restore (library DB + annotations + settings) | Must-have regardless. | **P0** |
 
@@ -236,7 +243,7 @@ Three doors, all first-class:
 
 1. **Your files.** Storage Access Framework picker (single + multi-select), a
    watched-folder scan (e.g. `/Download`, `/Documents/Books`), plus manifest entries
-   so Luminar appears in **"Open with"** and the **share sheet** for every supported
+   so Recto appears in **"Open with"** and the **share sheet** for every supported
    MIME type. Dropping a file on the app should Just Work.
 
 2. **Free catalogs, browsable in-app:**
@@ -352,34 +359,67 @@ app. Phases 0–2 (~5 weeks) already give you something you'd use daily.
 
 ---
 
-## 10. Open questions for you
+## 10. Open questions
 
-1. **Name.** Keep *Luminar*, or rename? (Affects package id — decide before Phase 0, it's
-   painful later. Suggest `com.luminar.reader` again, or something new.)
-2. **Just you, or public?** A personal sideloaded app can skip Play Store policy work,
-   privacy policy, data-safety forms and store assets. If it ever goes public, budget
-   an extra 1–2 weeks. Which are we building for?
-3. **License.** MIT / Apache-2.0 / GPL-3.0? Note that Readium is BSD-3 — compatible with
-   all three.
+### Answered ✅
+
+1. ~~**Name**~~ → **Recto**, package `dev.recto.reader`. "Luminar" collided with Skylum's
+   Luminar Neo photo editor; full reasoning and the rejected shortlist in [NAMING.md](NAMING.md).
+2. ~~**Audience**~~ → Personal sideload, shared with anyone who asks. **No Play Store work
+   in v1**: skip the privacy policy, data-safety form, store assets and content rating.
+   The architecture stays Play-compatible so publishing later is a packaging job, not a
+   rewrite — which is exactly why the name had to change now.
+3. ~~**License**~~ → **MIT**. `LICENSE` is committed. Readium is BSD-3 and all bundled
+   fonts are OFL/Apache-2.0, so everything is compatible.
+
+### Still open (none of these block Phase 0)
+
 4. **Tablet & foldable support in v1**, or phone-only first?
+   *Leaning phone-only, with layouts written adaptively so tablets are a Phase 8 nicety.*
 5. **Sync target:** Google Drive app-folder (easiest, Google-locked) vs WebDAV/Nextcloud
-   (self-hosted, more setup) vs a plain export/import file (dumbest, most reliable)?
-6. **Offline dictionary size.** A good English dictionary is 30–60 MB. Bundle it in the
-   APK, or download on first use?
-7. **Audiobooks (M4B) — ever?** If yes, the media architecture should be designed for it
-   in Phase 7 rather than retrofitted.
-8. **Anything from the old app worth salvaging?** The design docs
-   (`COMPETITOR_RESEARCH.md`, `FORMAT_AUDIT.md`, the glassmorphism/design-system work)
-   are all still in `archive/luminar-v1` if you want to mine them. My take: reuse the
-   *research*, none of the *code*.
+   (self-hosted) vs plain export/import file (dumbest, most reliable).
+   *Leaning export/import in v1, WebDAV later — no server for me to run either way.*
+6. **Offline dictionary:** 30–60 MB. Bundle in the APK, or download on first use?
+   *Leaning optional download — keeps the sideloaded APK small.*
+7. **Audiobooks (M4B) — ever?** If yes, design the media layer for it in Phase 7 rather
+   than retrofitting.
+8. **Salvage anything from the old app?** `COMPETITOR_RESEARCH.md`, `FORMAT_AUDIT.md` and
+   the design-system work are all in `archive/luminar-v1`.
+   *My take: reuse the research, none of the code.*
 
 ---
 
 ## 11. Immediate next step
 
-Answer §10 questions 1–3, then I scaffold **Phase 0**: the multi-module Gradle project,
-version catalog, CI workflow, design system and a debug APK that installs on your phone.
-Everything after that is filling in features against the table in §2.
+All three blocking questions are answered, so **Phase 0 is ready to scaffold**:
+multi-module Gradle project, version catalog, CI workflow, design system, and an
+installable debug APK.
+
+**One caveat about how this gets built.** The environment these docs were authored in
+has no JDK, no Android SDK and no network access to `dl.google.com`, so I can write the
+Gradle files but *cannot compile or verify them here*. The first `./gradlew assembleDebug`
+has to happen on your machine, and realistically a version pin or two will need fixing on
+that first run. Two ways to handle it:
+
+- **(a)** I write the full Phase 0 scaffold now; you run it and paste any errors back.
+- **(b)** You create the project skeleton in Android Studio (which generates a guaranteed-
+  working wrapper, SDK paths and `local.properties`), push it, and I build every feature
+  on top of a foundation that's known to compile.
+
+**(b) is lower-friction if you have Android Studio installed.** (a) is fine if you'd
+rather I do everything and don't mind a round-trip of build fixes.
+
+### Verified versions for Phase 0 (July 2026)
+
+| Component | Version | Note |
+|---|---|---|
+| AGP | 9.3.0 | requires Gradle 9.5.0, JDK 17, Build Tools 36 |
+| Kotlin | 2.3.x | Compose compiler plugin version must match exactly |
+| Compose BOM | 2026.06.01 | Material3 1.4.0 stable |
+| compileSdk / targetSdk | 36 | Compose 1.12+ will later force compileSdk 37 + AGP 9 |
+| minSdk | 28 | matches the `androidx.pdf` backport floor |
+| Readium | 3.2.0 | animated EPUB page transitions, May 2026 |
+| androidx.pdf | 1.0.0-alpha19 | **alpha — pin it**, see risk R1 |
 
 ---
 
