@@ -30,8 +30,18 @@ supported format is DRM-free or public domain.
 | Doc | What's in it |
 |---|---|
 | **[docs/BRAINSTORM.md](docs/BRAINSTORM.md)** | The plan. Kindle feature teardown, architecture, format strategy, notification design, UI, 9-phase roadmap, risks. **Read this first.** |
+| [docs/BUILD_SETUP.md](docs/BUILD_SETUP.md) | How to build: the scripts, the AGP 9 / KSP trap, adb setup, version pins |
 | [docs/NAMING.md](docs/NAMING.md) | Why "Recto", and the names that were rejected (and why "Luminar" had to go) |
 | [docs/ICEBOX.md](docs/ICEBOX.md) | Deferred and explicitly rejected scope — the anti-scope-creep contract |
+
+## Scripts
+
+```powershell
+.\scripts\recto-doctor.ps1    # check this machine can build — run this first, changes nothing
+.\scripts\recto-build.ps1     # build + install to phone + tail logs (once Phase 0 exists)
+```
+
+See [docs/BUILD_SETUP.md](docs/BUILD_SETUP.md) for details.
 
 ## Roadmap at a glance
 

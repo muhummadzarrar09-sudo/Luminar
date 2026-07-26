@@ -44,3 +44,6 @@ Thumbs.db
 # Sample books used for local testing — never commit copyrighted files
 /sample-books/
 /test-corpus/
+
+# Machine-specific script output
+scripts/doctor-report.txt

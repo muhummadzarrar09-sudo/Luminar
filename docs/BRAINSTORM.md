@@ -395,19 +395,15 @@ All three blocking questions are answered, so **Phase 0 is ready to scaffold**:
 multi-module Gradle project, version catalog, CI workflow, design system, and an
 installable debug APK.
 
-**One caveat about how this gets built.** The environment these docs were authored in
-has no JDK, no Android SDK and no network access to `dl.google.com`, so I can write the
-Gradle files but *cannot compile or verify them here*. The first `./gradlew assembleDebug`
-has to happen on your machine, and realistically a version pin or two will need fixing on
-that first run. Two ways to handle it:
+**How it gets built:** see **[BUILD_SETUP.md](BUILD_SETUP.md)**. Short version — the
+Android Studio scaffold and the PowerShell scripts are *not* alternatives. Studio (or the
+script's wrapper bootstrap) handles one-time setup; `scripts/recto-build.ps1` handles the
+daily build → install → read-logs loop. Run `scripts/recto-doctor.ps1` first and send me
+the report; it decides which setup path fits your machine.
 
-- **(a)** I write the full Phase 0 scaffold now; you run it and paste any errors back.
-- **(b)** You create the project skeleton in Android Studio (which generates a guaranteed-
-  working wrapper, SDK paths and `local.properties`), push it, and I build every feature
-  on top of a foundation that's known to compile.
-
-**(b) is lower-friction if you have Android Studio installed.** (a) is fine if you'd
-rather I do everything and don't mind a round-trip of build fixes.
+**Caveat:** these docs and scripts were authored in an environment with no JDK, no Android
+SDK and no access to `dl.google.com`, so nothing here has been executed. The first
+`./gradlew assembleDebug` happens on your machine.
 
 ### Verified versions for Phase 0 (July 2026)
 
