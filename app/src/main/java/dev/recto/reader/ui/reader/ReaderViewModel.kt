@@ -1,7 +1,6 @@
 package dev.recto.reader.ui.reader
 
 import android.app.Application
-import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.recto.reader.data.BookRepository
@@ -61,12 +60,10 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                 return@launch
             }
 
+            // Goes through the repository, which knows whether this book is
+            // referenced by SAF URI or was copied into app storage.
             val loaded = withContext(Dispatchers.IO) {
-                EpubLoader.load {
-                    getApplication<Application>().contentResolver
-                        .openInputStream(Uri.parse(book.sourceUri))
-                        ?: error("Cannot open this file. It may have been moved or deleted.")
-                }
+                EpubLoader.load { repo.openBook(book) }
             }
 
             loaded.fold(

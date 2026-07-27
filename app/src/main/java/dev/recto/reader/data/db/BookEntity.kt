@@ -7,15 +7,23 @@ import androidx.room.PrimaryKey
 /**
  * A book in the library.
  *
- * [sourceUri] is the SAF document URI the user picked. We take a persistable
- * read permission on it so it survives reboots. [coverPath] points at a JPEG
- * we extracted into app-private storage, because we cannot rely on the source
- * file staying reachable.
+ * Two ways a book can live on disk, and the difference matters:
+ *
+ *  - **Referenced** ([localPath] null). The user picked it with the system
+ *    file picker, so we hold a *persistable* SAF permission on [sourceUri]
+ *    and read it in place. No copy, no wasted storage.
+ *
+ *  - **Copied** ([localPath] set). The book arrived through a share sheet or
+ *    "Open with" - WhatsApp, Gmail, Telegram, a download notification. Those
+ *    URIs grant only transient permission that dies with the activity, and
+ *    takePersistableUriPermission() throws on them. The only way to keep the
+ *    book readable tomorrow is to copy the bytes into app storage now.
  */
 @Entity(
     tableName = "books",
     indices = [
         Index(value = ["sourceUri"], unique = true),
+        Index(value = ["contentHash"]),
         Index(value = ["lastOpenedAt"]),
         Index(value = ["addedAt"])
     ]
@@ -39,11 +47,25 @@ data class BookEntity(
     val progress: Float = 0f,
 
     /**
-     * Opaque resume position. For EPUB this will be a Readium locator JSON
-     * string; for PDF, a page index. Stored as text so the reader engine owns
-     * its own format and the database does not need to care.
+     * Opaque resume position. Currently a character offset; when Readium
+     * lands this becomes a locator JSON string. Stored as text so the reader
+     * engine owns its own format and the database need not care.
      */
     val locator: String? = null,
 
-    val isFinished: Boolean = false
+    val isFinished: Boolean = false,
+
+    /**
+     * Absolute path to our own copy of the file, when we had to make one.
+     * Null means read [sourceUri] directly.
+     */
+    val localPath: String? = null,
+
+    /**
+     * SHA-256 of the leading bytes plus file length, for copied books only.
+     * Share-sheet URIs are ephemeral, so the URI cannot identify a duplicate -
+     * the same book shared twice looks like two unrelated files. Content
+     * identity can.
+     */
+    val contentHash: String? = null
 )

@@ -57,7 +57,7 @@ fun LibraryScreen(
     // OpenMultipleDocuments gives us a persistable URI, unlike GetContent.
     val picker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
-    ) { uris -> vm.importAll(uris) }
+    ) { uris -> vm.importFromPicker(uris) }
 
     LaunchedEffect(message) {
         message?.let {

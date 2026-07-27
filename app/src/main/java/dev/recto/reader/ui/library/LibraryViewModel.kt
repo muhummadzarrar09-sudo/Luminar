@@ -6,11 +6,15 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.recto.reader.data.BookRepository
 import dev.recto.reader.data.ImportResult
+import dev.recto.reader.data.ImportSource
 import dev.recto.reader.data.db.BookEntity
 import dev.recto.reader.data.db.RectoDatabase
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -34,7 +38,25 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
-    fun importAll(uris: List<Uri>) {
+    /**
+     * Emitted when a book arrives from outside the app and should be opened
+     * immediately, rather than dropping the user on the library and making
+     * them hunt for what they just tapped.
+     */
+    private val _openImmediately = MutableSharedFlow<Long>(extraBufferCapacity = 4)
+    val openImmediately: SharedFlow<Long> = _openImmediately.asSharedFlow()
+
+    fun importFromPicker(uris: List<Uri>) =
+        import(uris, ImportSource.PICKER, openAfter = false)
+
+    /**
+     * A book handed to us by another app. Copies it into storage (the grant is
+     * transient) and then jumps straight into the reader.
+     */
+    fun importFromIntent(uris: List<Uri>) =
+        import(uris, ImportSource.EXTERNAL, openAfter = true)
+
+    private fun import(uris: List<Uri>, source: ImportSource, openAfter: Boolean) {
         if (uris.isEmpty()) return
         viewModelScope.launch {
             _importing.value = true
@@ -45,11 +67,22 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
             var failed = 0
             var lastTitle: String? = null
             var firstError: String? = null
+            var openId: Long? = null
 
             for (uri in uris) {
-                when (val result = repo.import(uri)) {
-                    is ImportResult.Added -> { added++; lastTitle = result.title }
-                    is ImportResult.Duplicate -> duplicate++
+                when (val result = repo.import(uri, source)) {
+                    is ImportResult.Added -> {
+                        added++
+                        lastTitle = result.title
+                        if (openId == null) openId = result.id
+                    }
+                    is ImportResult.Duplicate -> {
+                        duplicate++
+                        lastTitle = result.title
+                        // Opening a book you already have is still the right
+                        // outcome - the user tapped it expecting to read it.
+                        if (openId == null && result.id > 0) openId = result.id
+                    }
                     is ImportResult.Unsupported -> unsupported++
                     is ImportResult.Failed -> {
                         failed++
@@ -59,7 +92,16 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
             }
 
             _importing.value = false
-            _message.value = summarise(added, duplicate, unsupported, failed, lastTitle, firstError)
+
+            // Opening one book straight away is its own feedback; a snackbar
+            // over the first page would just be noise.
+            val single = uris.size == 1 && openAfter && openId != null
+            if (!single) {
+                _message.value =
+                    summarise(added, duplicate, unsupported, failed, lastTitle, firstError)
+            }
+
+            if (openAfter) openId?.let { _openImmediately.emit(it) }
         }
     }
 

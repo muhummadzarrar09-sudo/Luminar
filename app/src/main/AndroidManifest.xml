@@ -12,6 +12,7 @@
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
+            android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|density|fontScale"
             android:theme="@style/Theme.Recto">
 
@@ -21,22 +22,77 @@
             </intent-filter>
 
             <!--
-                Appear in "Open with" for ebook files. Phase 1 only reads EPUB,
-                so only EPUB is advertised; the rest get added as their readers
-                land, rather than claiming files we would fail to open.
+                "Open with Recto" from a file manager, a download notification,
+                or a chat app's attachment preview.
+
+                Matching ebook files is awkward: many providers report
+                application/octet-stream for anything they do not recognise,
+                and WhatsApp is one of them. So we match three ways:
+                  1. by MIME type, when the provider is honest
+                  2. by file extension on content:// URIs, for when it is not
+                  3. by file:// and http(s) for downloads and file managers
+
+                An intent-filter needs scheme + host + pathPattern together to
+                match on extension, hence the separate blocks.
             -->
-            <intent-filter>
+
+            <!-- 1. Honest MIME types. -->
+            <intent-filter android:priority="1">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:mimeType="application/epub+zip" />
+                <data android:mimeType="application/x-epub+zip" />
+                <data android:mimeType="application/epub" />
             </intent-filter>
 
-            <!-- Share sheet target. -->
+            <!-- 2. Generic MIME plus an .epub path, for providers that shrug. -->
+            <intent-filter android:priority="1">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="application/zip" />
+
+                <data android:host="*" />
+                <data android:pathPattern=".*\\.epub" />
+                <data android:pathPattern=".*\\..*\\.epub" />
+                <data android:pathPattern=".*\\..*\\..*\\.epub" />
+            </intent-filter>
+
+            <!-- 3. No MIME type at all, just a path. File managers do this. -->
+            <intent-filter android:priority="1">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data android:scheme="file" />
+                <data android:scheme="content" />
+                <data android:host="*" />
+                <data android:pathPattern=".*\\.epub" />
+                <data android:pathPattern=".*\\..*\\.epub" />
+            </intent-filter>
+
+            <!-- Share sheet: "Share -> Recto" from WhatsApp, Gmail, Drive. -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="application/epub+zip" />
+                <data android:mimeType="application/x-epub+zip" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
+
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/epub+zip" />
+                <data android:mimeType="application/x-epub+zip" />
             </intent-filter>
 
         </activity>

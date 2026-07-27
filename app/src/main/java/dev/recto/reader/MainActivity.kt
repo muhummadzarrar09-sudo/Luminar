@@ -1,42 +1,89 @@
 package dev.recto.reader
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.recto.reader.ui.library.LibraryScreen
+import dev.recto.reader.ui.library.LibraryViewModel
 import dev.recto.reader.ui.reader.ReaderScreen
 import dev.recto.reader.ui.theme.RectoTheme
+import kotlinx.coroutines.flow.MutableStateFlow
 
 class MainActivity : ComponentActivity() {
+
+    /**
+     * Intents arriving from outside the app. A StateFlow rather than a plain
+     * field because onNewIntent can fire while Compose is already running -
+     * for instance tapping a second WhatsApp attachment while Recto is open.
+     */
+    private val incoming = MutableStateFlow<Intent?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+
+        // Only treat this as an incoming book on a fresh start. On a
+        // configuration change or process restore the same intent is redelivered,
+        // and re-importing on every rotation would be maddening.
+        if (savedInstanceState == null) {
+            incoming.value = intent
+        }
+
         setContent {
             RectoTheme {
-                RectoApp()
+                RectoApp(incoming = incoming)
             }
         }
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        incoming.value = intent
+    }
 }
 
-/**
- * Two destinations, so a navigation library would be more ceremony than it is
- * worth right now. Navigation Compose arrives in Phase 2 when Home, Catalog
- * and Settings join the graph.
- */
 @Composable
-private fun RectoApp() {
+private fun RectoApp(incoming: MutableStateFlow<Intent?>) {
+    // Hoisted so the library keeps importing even while the reader is on top.
+    val libraryVm: LibraryViewModel = viewModel()
+
     var openBookId by rememberSaveable { mutableStateOf<Long?>(null) }
+
+    val pendingIntent by incoming.collectAsState()
+
+    LaunchedEffect(pendingIntent) {
+        val uris = IncomingBook.urisFrom(pendingIntent)
+        if (uris.isNotEmpty()) {
+            libraryVm.importFromIntent(uris)
+        }
+        // Consume it either way, so rotation cannot replay the import.
+        if (pendingIntent != null) incoming.value = null
+    }
+
+    // A book handed to us from outside goes straight to the reader. Dropping
+    // the user on the library after they tapped a specific file makes them
+    // hunt for the thing they just opened.
+    LaunchedEffect(Unit) {
+        libraryVm.openImmediately.collect { id -> openBookId = id }
+    }
 
     val id = openBookId
     if (id == null) {
-        LibraryScreen(onOpenBook = { book -> openBookId = book.id })
+        LibraryScreen(
+            onOpenBook = { book -> openBookId = book.id },
+            vm = libraryVm
+        )
     } else {
         ReaderScreen(
             bookId = id,
