@@ -82,9 +82,25 @@ Head "2. Java (JDK)"
 
 $javaCmd = Get-Command java -ErrorAction SilentlyContinue
 if ($javaCmd) {
-    $raw = (& java -version 2>&1 | Out-String).Trim()
+    # 'java -version' writes to stderr. Under $ErrorActionPreference other than
+    # SilentlyContinue, PowerShell turns that into a NativeCommandError record
+    # and prints an ugly fake error. Suppress it just for this call.
+    $raw = ""
+    try {
+        $old = $ErrorActionPreference
+        $ErrorActionPreference = "SilentlyContinue"
+        $raw = (& java -version 2>&1 | ForEach-Object { "$_" }) -join "`n"
+        $ErrorActionPreference = $old
+    } catch {
+        $ErrorActionPreference = "Continue"
+    }
+    $raw = $raw.Trim()
+
     Say "  java on PATH  : $($javaCmd.Source)"
-    foreach ($line in ($raw -split "`n")) { Note $line.Trim() }
+    foreach ($line in ($raw -split "`n")) {
+        $t = $line.Trim()
+        if ($t) { Note $t }
+    }
 
     if ($raw -match '"(\d+)') {
         $major = [int]$Matches[1]
@@ -235,13 +251,35 @@ if ($sdk) {
     if (Test-Path $adb) {
         Ok "adb found: $adb"
         try {
-            $devLines = @(& $adb devices 2>&1 |
+            $old = $ErrorActionPreference
+            $ErrorActionPreference = "SilentlyContinue"
+            # Force every item to a string; adb can emit stderr records that
+            # have no .Trim() method and would blow up the loop.
+            $devRaw = @(& $adb devices 2>&1 | ForEach-Object { "$_" })
+            $ErrorActionPreference = $old
+
+            $devLines = @($devRaw |
                           Select-Object -Skip 1 |
-                          Where-Object { $_ -match "\S" })
-            if ($devLines.Count -gt 0) {
-                Ok "Device(s) connected:"
-                foreach ($d in $devLines) { Note $d.Trim() }
+                          Where-Object { $_.Trim() -ne "" })
+
+            $ready        = @($devLines | Where-Object { $_ -match "\sdevice$" })
+            $unauthorized = @($devLines | Where-Object { $_ -match "unauthorized" })
+            $offline      = @($devLines | Where-Object { $_ -match "offline" })
+
+            if ($ready.Count -gt 0) {
+                Ok "Device ready ($($ready.Count)):"
+                foreach ($d in $ready) { Note $d.Trim() }
                 Note "=> the build script can install straight to your phone."
+            } elseif ($unauthorized.Count -gt 0) {
+                Bad "Device connected but UNAUTHORIZED."
+                foreach ($d in $unauthorized) { Note $d.Trim() }
+                Note "Unlock the phone and tap 'Allow' on the USB debugging prompt."
+                Note "If no prompt appears: revoke USB debugging authorisations"
+                Note "in Developer options, then replug."
+            } elseif ($offline.Count -gt 0) {
+                Warn "Device is offline."
+                foreach ($d in $offline) { Note $d.Trim() }
+                Note "Try: adb kill-server, then replug the cable."
             } else {
                 Warn "No device connected right now."
                 Note "For one-command installs: enable Developer Options,"
@@ -249,7 +287,8 @@ if ($sdk) {
                 Note "Without it we just copy the APK over manually. Both work."
             }
         } catch {
-            Warn "Could not run 'adb devices'."
+            $ErrorActionPreference = "Continue"
+            Warn "Could not run 'adb devices': $($_.Exception.Message)"
         }
     } else {
         Bad "platform-tools\adb.exe missing. Install 'Android SDK Platform-Tools'."

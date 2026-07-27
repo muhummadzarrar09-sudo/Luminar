@@ -95,33 +95,82 @@ if (-not (Test-Path "local.properties")) {
 # ------------------------------------------------------- 2. Gradle wrapper
 Step "Checking Gradle wrapper..."
 
-if (-not (Test-Path "gradle\wrapper\gradle-wrapper.jar")) {
-    Warn "Wrapper JAR missing - fetching it."
+$jarPath = "gradle\wrapper\gradle-wrapper.jar"
+
+# A valid JAR is a ZIP: it must start with the bytes 'PK'. A truncated or
+# HTML-error-page download would otherwise fail later with a baffling
+# "invalid entry CRC" or "could not find main class" error.
+$jarLooksValid = $false
+if (Test-Path $jarPath) {
+    try {
+        $fs = [System.IO.File]::OpenRead((Resolve-Path $jarPath))
+        $sig = New-Object byte[] 2
+        $null = $fs.Read($sig, 0, 2)
+        $fs.Close()
+        if ($sig[0] -eq 0x50 -and $sig[1] -eq 0x4B -and (Get-Item $jarPath).Length -gt 10000) {
+            $jarLooksValid = $true
+        }
+    } catch {
+        $jarLooksValid = $false
+    }
+    if (-not $jarLooksValid) {
+        Warn "Existing wrapper JAR looks corrupt. Re-downloading."
+        Remove-Item $jarPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+if (-not $jarLooksValid) {
+    Warn "Wrapper JAR missing - fetching it (one time only)."
     New-Item -ItemType Directory -Force -Path "gradle\wrapper" | Out-Null
 
     $gradleVer = "9.5.0"
     if (Test-Path "gradle\wrapper\gradle-wrapper.properties") {
-        $line = Select-String -Path "gradle\wrapper\gradle-wrapper.properties" -Pattern "gradle-([\d.]+)-bin" -ErrorAction SilentlyContinue
-        if ($line -and $line.Matches[0].Groups[1].Value) { $gradleVer = $line.Matches[0].Groups[1].Value }
+        $m = Select-String -Path "gradle\wrapper\gradle-wrapper.properties" `
+                           -Pattern "gradle-([\d.]+)-bin" -ErrorAction SilentlyContinue
+        if ($m) { $gradleVer = $m.Matches[0].Groups[1].Value }
     }
     Info "Targeting Gradle $gradleVer"
 
+    # TLS 1.2 - Windows PowerShell 5.1 does not always negotiate it by default,
+    # and both of these hosts require it.
+    try {
+        [Net.ServicePointManager]::SecurityProtocol =
+            [Net.SecurityProtocolType]::Tls12 -bor [Net.ServicePointManager]::SecurityProtocol
+    } catch { }
+
+    $got = $false
     $jarUrl = "https://raw.githubusercontent.com/gradle/gradle/v$gradleVer/gradle/wrapper/gradle-wrapper.jar"
     try {
-        Invoke-WebRequest -Uri $jarUrl -OutFile "gradle\wrapper\gradle-wrapper.jar" -UseBasicParsing
-        Ok "Downloaded gradle-wrapper.jar from GitHub."
+        Info "Trying GitHub..."
+        Invoke-WebRequest -Uri $jarUrl -OutFile $jarPath -UseBasicParsing -TimeoutSec 60
+        if ((Get-Item $jarPath).Length -gt 10000) {
+            $got = $true
+            Ok "Downloaded gradle-wrapper.jar."
+        }
     } catch {
-        Warn "GitHub route failed. Falling back to the full Gradle distribution."
+        Info "GitHub route failed: $($_.Exception.Message)"
+    }
+
+    if (-not $got) {
+        Warn "Falling back to the full Gradle distribution (~130 MB)."
         $zip = "$env:TEMP\gradle-$gradleVer-bin.zip"
-        $ex  = "$env:TEMP\gradle-$gradleVer-x"
-        Invoke-WebRequest -Uri "https://services.gradle.org/distributions/gradle-$gradleVer-bin.zip" -OutFile $zip -UseBasicParsing
-        Expand-Archive -Path $zip -DestinationPath $ex -Force
-        $found = Get-ChildItem $ex -Recurse -Filter "gradle-wrapper.jar" | Select-Object -First 1
-        if (-not $found) { Die "gradle-wrapper.jar not found inside the distribution." }
-        Copy-Item $found.FullName "gradle\wrapper\gradle-wrapper.jar"
-        Remove-Item $zip -Force -ErrorAction SilentlyContinue
-        Remove-Item $ex -Recurse -Force -ErrorAction SilentlyContinue
-        Ok "Extracted gradle-wrapper.jar."
+        $ex  = "$env:TEMP\gradle-$gradleVer-extract"
+        try {
+            Invoke-WebRequest -Uri "https://services.gradle.org/distributions/gradle-$gradleVer-bin.zip" `
+                              -OutFile $zip -UseBasicParsing -TimeoutSec 600
+            Expand-Archive -Path $zip -DestinationPath $ex -Force
+            $found = Get-ChildItem $ex -Recurse -Filter "gradle-wrapper.jar" -ErrorAction SilentlyContinue |
+                     Select-Object -First 1
+            if (-not $found) { Die "gradle-wrapper.jar not found inside the distribution." }
+            Copy-Item $found.FullName $jarPath -Force
+            Ok "Extracted gradle-wrapper.jar."
+        } catch {
+            Die "Could not obtain gradle-wrapper.jar: $($_.Exception.Message)" `
+                "Check your internet connection, then re-run."
+        } finally {
+            Remove-Item $zip -Force -ErrorAction SilentlyContinue
+            Remove-Item $ex -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 } else {
     Ok "Wrapper JAR present."

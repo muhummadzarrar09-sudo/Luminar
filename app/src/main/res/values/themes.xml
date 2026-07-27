@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Compose draws the real UI. This theme only covers the brief window
+        before the first frame, so it matches the paper background to avoid
+        a white or black flash on launch.
+    -->
+    <style name="Theme.Recto" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">@color/paper</item>
+        <item name="android:navigationBarColor">@color/paper</item>
+        <item name="android:windowBackground">@color/paper</item>
+    </style>
+</resources>
