@@ -12,11 +12,33 @@
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|density|fontScale"
             android:theme="@style/Theme.Recto">
+
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!--
+                Appear in "Open with" for ebook files. Phase 1 only reads EPUB,
+                so only EPUB is advertised; the rest get added as their readers
+                land, rather than claiming files we would fail to open.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="application/epub+zip" />
+            </intent-filter>
+
+            <!-- Share sheet target. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/epub+zip" />
+            </intent-filter>
+
         </activity>
 
     </application>

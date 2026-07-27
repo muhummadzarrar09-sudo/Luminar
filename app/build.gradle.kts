@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.compose.compiler)
+    alias(libs.plugins.ksp)
 }
 
 android {
@@ -53,6 +54,13 @@ android {
     }
 }
 
+// Export Room schemas from day one and keep them in version control. The
+// previous project had schema 1, 2 and 9 with the middle versions missing,
+// which is how you end up wiping a user's library on upgrade.
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 // With AGP 9 built-in Kotlin, android.kotlinOptions {} no longer exists.
 // Compiler options move to a top-level kotlin {} block.
 kotlin {
@@ -64,6 +72,8 @@ kotlin {
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.activity.compose)
 
     val composeBom = platform(libs.compose.bom)
@@ -76,4 +86,8 @@ dependencies {
     implementation(libs.compose.ui.tooling.preview)
 
     debugImplementation(libs.compose.ui.tooling)
+
+    implementation(libs.room.runtime)
+    implementation(libs.room.ktx)
+    ksp(libs.room.compiler)
 }
