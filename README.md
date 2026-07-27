@@ -5,8 +5,9 @@
 A Kindle-class ebook reader for Android. Read PDF, EPUB, DOCX and more on your own
 phone — offline, free, no account, no ads, no tracking.
 
-> **Status: planning.** The repo was reset to a clean slate on 2026-07-26. There is no
-> application code yet, by design. Start with [`docs/BRAINSTORM.md`](docs/BRAINSTORM.md).
+> **Status: Phase 0.** A minimal Compose app that builds and installs, to prove the
+> toolchain. No reading features yet — those start in Phase 1.
+> The plan is in [`docs/BRAINSTORM.md`](docs/BRAINSTORM.md).
 
 ---
 
@@ -40,7 +41,7 @@ supported format is DRM-free or public domain.
 # Run this first. Read-only, changes nothing, writes doctor-report.txt.
 powershell -ExecutionPolicy Bypass -File .\scripts\recto-doctor.ps1
 
-# Build + install to phone + tail logs (once Phase 0 exists).
+# Build + install to phone + tail logs.
 powershell -ExecutionPolicy Bypass -File .\scripts\recto-build.ps1
 
 # Verify the scripts are ASCII-clean and parse (they must stay ASCII).
@@ -53,7 +54,7 @@ See [docs/BUILD_SETUP.md](docs/BUILD_SETUP.md) for details.
 
 | Phase | Delivers |
 |---|---|
-| 0 | Project skeleton, CI, design system, installable blank APK |
+| 0 | Project skeleton, CI, design system, installable blank APK **(done, pending first build)** |
 | 1 | Read an EPUB end to end — import, library, reader, saved position |
 | 2 | Kindle feel — typography, 4 themes, page-turn animations, time-left |
 | 3 | PDF + every other format via the convert-to-EPUB pipeline |
@@ -67,16 +68,20 @@ Phases 0–2 (~5 weeks of evenings) already produce a daily driver.
 
 ## Build
 
-Nothing to build yet. Once Phase 0 lands:
-
-```bash
-./gradlew assembleDebug
-adb install app/build/outputs/apk/debug/app-debug.apk
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\recto-build.ps1
 ```
 
-Requires JDK 17 and Android SDK 36. **Note:** the project is authored in an environment
-without a JDK or Android SDK, so the first real compile happens on your machine —
-expect to fix a version pin or two on the first run.
+That fetches the Gradle wrapper JAR, builds the debug APK, installs it over adb and
+tails the log. First run takes 5–15 minutes while Gradle and the dependencies download.
+
+Requires JDK 17 and Android SDK 36 (`scripts\recto-doctor.ps1` verifies both).
+
+**Note:** this project is authored in an environment with no JDK and no Android SDK, so
+the code has been statically checked but never compiled here. The first build on your
+machine is the real test — if it fails, paste the error and it gets fixed. Enabling the
+parked CI workflow (see [`ci/README.md`](ci/README.md)) adds automatic compile
+verification on every push.
 
 ## The previous app
 
