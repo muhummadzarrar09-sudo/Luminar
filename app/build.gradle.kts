@@ -21,12 +21,22 @@ android {
             versionNameSuffix = "-debug"
         }
         release {
-            isMinifyEnabled = false
+            // R8 full mode: shrink code and resources. Phase 0's debug APK is
+            // ~28 MB, almost all of it Compose tooling and unstripped classes;
+            // the release build should land near a third of that.
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
         }
+    }
+
+    // Keep only the languages we actually ship strings for, and split by
+    // density where it helps. Mostly this trims androidx's bundled translations.
+    androidResources {
+        localeFilters += listOf("en")
     }
 
     buildFeatures {

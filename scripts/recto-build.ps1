@@ -244,23 +244,69 @@ if (-not $NoInstall) {
     }
 
     if ($adb) {
-        $devs = & $adb devices 2>&1 | Select-Object -Skip 1 | Where-Object { $_ -match "device$" }
-        if ($devs) {
-            Ok "Device connected."
+        # adb writes chatter like "* daemon not running; starting now" to
+        # stderr. With $ErrorActionPreference = "Stop" that becomes a
+        # NativeCommandError and kills the script, so every adb call goes
+        # through this helper, which returns plain strings and never throws.
+        function Invoke-Adb {
+            param([string[]]$AdbArgs)
+            $prev = $ErrorActionPreference
+            $ErrorActionPreference = "SilentlyContinue"
+            $out = & $adb @AdbArgs 2>&1 | ForEach-Object { "$_" }
+            $script:AdbExit = $LASTEXITCODE
+            $ErrorActionPreference = $prev
+            return @($out)
+        }
+
+        # Start the daemon first so its banner does not pollute the device list.
+        Info "Starting adb server..."
+        $null = Invoke-Adb @("start-server")
+
+        $devRaw   = Invoke-Adb @("devices")
+        $devLines = @($devRaw | Select-Object -Skip 1 | Where-Object { $_.Trim() -ne "" })
+
+        $ready        = @($devLines | Where-Object { $_ -match "\sdevice$" })
+        $unauthorized = @($devLines | Where-Object { $_ -match "unauthorized" })
+        $offline      = @($devLines | Where-Object { $_ -match "offline" })
+
+        if ($ready.Count -gt 0) {
+            Ok "Device ready: $($ready[0].Trim())"
             Step "Installing..."
-            & $adb install -r $apk.FullName
-            if ($LASTEXITCODE -eq 0) {
+
+            # -r reinstall, -t allow test builds, -d allow downgrade
+            $installOut = Invoke-Adb @("install", "-r", "-d", $apk.FullName)
+            foreach ($l in $installOut) { if ($l.Trim()) { Info $l.Trim() } }
+
+            if (($installOut -join " ") -match "Success") {
                 $installed = $true
                 Ok "Installed."
+
                 Step "Launching..."
-                & $adb shell monkey -p $AppId -c android.intent.category.LAUNCHER 1 2>&1 | Out-Null
+                $null = Invoke-Adb @("shell", "monkey", "-p", $AppId,
+                                     "-c", "android.intent.category.LAUNCHER", "1")
                 Ok "Launched on device."
             } else {
-                Warn "adb install failed. Falling back to manual transfer."
+                Warn "adb install did not report Success."
+                if (($installOut -join " ") -match "INSTALL_FAILED_UPDATE_INCOMPATIBLE|signatures do not match") {
+                    Info "A different build of $AppId is already installed."
+                    Info "Uninstall it first:  adb uninstall $AppId"
+                } elseif (($installOut -join " ") -match "INSTALL_FAILED_INSUFFICIENT_STORAGE") {
+                    Info "Not enough free space on the phone."
+                }
+                Info "Falling back to manual transfer."
             }
+        } elseif ($unauthorized.Count -gt 0) {
+            Warn "Device is connected but UNAUTHORIZED."
+            Info "Unlock the phone and tap 'Allow' on the USB debugging prompt."
+            Info "No prompt? Developer options -> Revoke USB debugging"
+            Info "authorisations, then unplug and replug."
+        } elseif ($offline.Count -gt 0) {
+            Warn "Device reports offline."
+            Info "Try: adb kill-server   then replug the cable."
         } else {
             Warn "No device detected over USB."
-            Info "Enable Developer Options -> USB debugging, plug in, tap Allow."
+            Info "Enable Developer Options -> USB debugging, plug in a DATA"
+            Info "cable (charge-only cables will not work), then tap Allow."
         }
     } else {
         Warn "adb not found."
@@ -289,14 +335,23 @@ if ($installed -and -not $NoLogcat) {
     Write-Host "  Tailing logcat for $AppId. Ctrl+C to stop." -ForegroundColor Cyan
     Write-Host ""
 
-    Start-Sleep -Seconds 1   # give the process a moment to appear
-    $pidRaw = (& $adb shell pidof -s $AppId 2>$null | Out-String).Trim()
+    # Never let a logcat hiccup look like a build failure - the APK is
+    # already installed and running by this point.
+    $ErrorActionPreference = "SilentlyContinue"
+
+    Start-Sleep -Seconds 2   # let the process appear in the process table
+
+    $pidRaw = ""
+    try {
+        $pidRaw = (& $adb shell pidof -s $AppId 2>&1 | ForEach-Object { "$_" }) -join ""
+        $pidRaw = $pidRaw.Trim()
+    } catch { }
 
     if ($pidRaw -match '^\d+$') {
         & $adb logcat "--pid=$pidRaw"
     } else {
-        Warn "Could not resolve the app PID; showing an unfiltered tail instead."
-        Info "Filter manually with:  adb logcat | Select-String 'Recto'"
+        Info "Could not resolve the app PID; tailing everything instead."
+        Info "Ctrl+C to stop."
         & $adb logcat -v brief
     }
 }
