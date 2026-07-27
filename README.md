@@ -5,8 +5,8 @@
 A Kindle-class ebook reader for Android. Read PDF, EPUB, DOCX and more on your own
 phone — offline, free, no account, no ads, no tracking.
 
-> **Status: Phase 0.** A minimal Compose app that builds and installs, to prove the
-> toolchain. No reading features yet — those start in Phase 1.
+> **Status: Phase 1.** Import EPUBs and read them, with paginated page turns and
+> your position remembered. Phase 0 (toolchain) is verified building on device.
 > The plan is in [`docs/BRAINSTORM.md`](docs/BRAINSTORM.md).
 
 ---
@@ -54,8 +54,8 @@ See [docs/BUILD_SETUP.md](docs/BUILD_SETUP.md) for details.
 
 | Phase | Delivers |
 |---|---|
-| 0 | Project skeleton, CI, design system, installable blank APK **(done, pending first build)** |
-| 1 | Read an EPUB end to end — import, library, reader, saved position |
+| 0 | Project skeleton, CI, design system, installable APK **— done, builds on device** |
+| 1 | Read an EPUB end to end — import, library, reader, saved position **— done, needs testing** |
 | 2 | Kindle feel — typography, 4 themes, page-turn animations, time-left |
 | 3 | PDF + every other format via the convert-to-EPUB pipeline |
 | 4 | Highlights, notes, bookmarks, notebook export, full-text search |
