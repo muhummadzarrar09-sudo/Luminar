@@ -1,0 +1,25 @@
+# Normalise text files in the repo, but force Windows tooling to get CRLF.
+* text=auto eol=lf
+
+# PowerShell: always CRLF on checkout. Windows PowerShell 5.1 is happier with
+# it, and it keeps editors from re-saving the file in a different encoding.
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Gradle wrapper script for unix must stay LF.
+gradlew text eol=lf
+*.sh text eol=lf
+
+# Binary: never touch.
+*.jar binary
+*.png binary
+*.jpg binary
+*.webp binary
+*.ttf binary
+*.otf binary
+*.apk binary
+*.aab binary
+*.keystore binary
+*.epub binary
+*.pdf binary

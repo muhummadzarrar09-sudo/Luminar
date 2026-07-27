@@ -1,5 +1,5 @@
 <#
-    recto-build.ps1 — build Recto, install it on your phone, and watch the logs.
+    recto-build.ps1 - build Recto, install it on your phone, and watch the logs.
 
     This is the successor to the old luminar-run.ps1, with the rough edges from
     that one fixed: it installs over USB instead of opening Explorer, it can tail
@@ -16,6 +16,11 @@
 
     First run downloads Gradle and every dependency. Expect 5-15 minutes and a
     few hundred MB. Every run after that is seconds.
+
+    NOTE: this file is deliberately pure ASCII. Windows PowerShell 5.1 reads
+    BOM-less files as cp1252, where the bytes of a UTF-8 em-dash decode to a
+    curly quote and silently break parsing. Do not add smart quotes, em-dashes,
+    arrows or accented characters to this file.
 #>
 
 param(

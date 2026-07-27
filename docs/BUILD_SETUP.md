@@ -146,13 +146,51 @@ Wireless works too on Android 11+ (`adb pair`), if you'd rather not use a cable.
 | minSdk | 28 | the `androidx.pdf` backport floor |
 | JDK | 17 | 21 also fine; **25 caused your JVM-target fallback** |
 
+## Known bug, already fixed: the em-dash that broke the doctor
+
+The first version of `recto-doctor.ps1` failed to parse on Windows with three
+confusing errors — an unexpected `}` at line 122, an unterminated string at 241, and a
+missing closing brace at 132. None of those lines was actually wrong.
+
+**Cause.** I wrote the script with em-dashes (`—`, U+2014) in comments and saved it as
+UTF-8 with no BOM. An em-dash is the byte sequence `E2 80 94`. **Windows PowerShell 5.1
+assumes cp1252 for BOM-less files**, and in cp1252 those bytes decode as `â€"` — where
+the final `0x94` is a *right curly double-quote*. PowerShell treats that as a string
+delimiter, so one em-dash inside a comment silently opened a phantom string, swallowed
+the rest of the file, and produced errors pointing at innocent lines far away.
+
+This is a classic Windows PowerShell trap and it bites hard because the reported line
+numbers are useless.
+
+**Fix, three layers:**
+
+1. All `.ps1` files are now **pure ASCII**. No em-dashes, smart quotes, arrows or
+   accents. Each script says so in its header.
+2. **`scripts/check-ascii.ps1`** flags any non-ASCII byte (with line numbers and
+   `U+XXXX` codes) and runs each file through PowerShell's own parser.
+3. **`.gitattributes`** forces `*.ps1` to CRLF on checkout, so editors don't
+   re-save them in a surprising encoding.
+
+Run the checker any time a script misbehaves:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\check-ascii.ps1
+```
+
+If you ever add a script yourself, keep it ASCII. PowerShell 7 (`pwsh`) defaults to
+UTF-8 and wouldn't care, but Windows PowerShell 5.1 ships on every Windows box and is
+almost certainly what you're running.
+
 ## A note on where these scripts came from
 
-I wrote them in a sandbox with **no JDK, no Android SDK, and no network access to
-`dl.google.com`**. So they are carefully written and internally consistent, but they have
-never been executed. `recto-doctor.ps1` is read-only and safe by construction.
-`recto-build.ps1` won't do anything useful until Phase 0 exists — it exits with a clear
-message if `settings.gradle.kts` is missing.
+I wrote them in a sandbox with **no JDK, no Android SDK, no PowerShell and no network
+access to `dl.google.com`**. They are carefully written and statically checked — pure
+ASCII, balanced braces and parens, no reserved variable names — but the em-dash bug is a
+good reminder that static checking is not execution. `recto-doctor.ps1` is read-only and
+safe by construction; `recto-build.ps1` exits with a clear message if
+`settings.gradle.kts` is missing, so it can't do damage before Phase 0 exists.
+
+If anything else in them misfires, paste the error and I'll fix it the same way.
 
 If PowerShell blocks them, that's the default execution policy, not a problem with the
 files:

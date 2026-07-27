@@ -37,8 +37,14 @@ supported format is DRM-free or public domain.
 ## Scripts
 
 ```powershell
-.\scripts\recto-doctor.ps1    # check this machine can build — run this first, changes nothing
-.\scripts\recto-build.ps1     # build + install to phone + tail logs (once Phase 0 exists)
+# Run this first. Read-only, changes nothing, writes doctor-report.txt.
+powershell -ExecutionPolicy Bypass -File .\scripts\recto-doctor.ps1
+
+# Build + install to phone + tail logs (once Phase 0 exists).
+powershell -ExecutionPolicy Bypass -File .\scripts\recto-build.ps1
+
+# Verify the scripts are ASCII-clean and parse (they must stay ASCII).
+powershell -ExecutionPolicy Bypass -File .\scripts\check-ascii.ps1
 ```
 
 See [docs/BUILD_SETUP.md](docs/BUILD_SETUP.md) for details.
