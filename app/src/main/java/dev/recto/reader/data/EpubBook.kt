@@ -44,6 +44,9 @@ object EpubLoader {
         val documents = LinkedHashMap<String, String>()
         var spine: List<String> = emptyList()
         var opfDir = ""
+        var ncx: String? = null
+        var navDoc: String? = null
+        var navDocPath: String? = null
 
         open().use { raw ->
             ZipInputStream(raw.buffered()).use { zip ->
@@ -59,10 +62,25 @@ object EpubLoader {
                             spine = opf.hrefs
                         }
 
+                        // EPUB 2 navigation document.
+                        name.endsWith(".ncx", ignoreCase = true) -> {
+                            ncx = zip.readBytes().toString(Charsets.UTF_8)
+                        }
+
                         isContentDoc(name) -> {
                             val bytes = zip.readBytes()
                             if (bytes.size < 4_000_000) {
-                                documents[name] = bytes.toString(Charsets.UTF_8)
+                                val markup = bytes.toString(Charsets.UTF_8)
+                                documents[name] = markup
+                                // EPUB 3 nav documents are ordinary XHTML with
+                                // epub:type="toc", so they only reveal
+                                // themselves once decoded.
+                                if (navDoc == null && markup.contains("epub:type", true) &&
+                                    Regex("epub:type\\s*=\\s*[\"'][^\"']*\\btoc\\b").containsMatchIn(markup)
+                                ) {
+                                    navDoc = markup
+                                    navDocPath = name
+                                }
                             }
                         }
                     }
@@ -86,12 +104,23 @@ object EpubLoader {
             documents.toList()
         }
 
+        // Titles from the EPUB's own navigation document, which is what the
+        // author actually intended the contents list to say. Falling back to
+        // the first heading in the markup covers books with no nav doc, and a
+        // numbered placeholder covers books with neither.
+        val tocTitles: Map<String, String> = buildTocTitles(navDoc, navDocPath, ncx, opfDir)
+
         val chapters = ordered.mapNotNull { (href, markup) ->
             val text = htmlToText(markup)
             if (text.length < 12) return@mapNotNull null
+
+            val fromToc = tocTitles.entries
+                .firstOrNull { matches(href, it.key) }
+                ?.value
+
             Chapter(
                 href = href,
-                title = extractHeading(markup),
+                title = fromToc ?: extractHeading(markup),
                 text = text.take(MAX_CHAPTER_CHARS)
             )
         }
@@ -253,4 +282,64 @@ object EpubLoader {
 
         return SpineInfo(title, author, spineIds.mapNotNull { manifest[it] })
     }
+    /**
+     * Maps content-document href -> chapter title, from whichever navigation
+     * document the EPUB provides.
+     *
+     * EPUB 3 uses an XHTML nav document with epub:type="toc"; EPUB 2 uses a
+     * separate .ncx file. Plenty of real books in the wild ship both, or a
+     * malformed one, so we try nav first and fall back to ncx.
+     */
+    private fun buildTocTitles(
+        navDoc: String?,
+        navDocPath: String?,
+        ncx: String?,
+        opfDir: String
+    ): Map<String, String> {
+        val fromNav = navDoc?.let { parseNavDoc(it, navDocPath.orEmpty()) }.orEmpty()
+        if (fromNav.isNotEmpty()) return fromNav
+        return ncx?.let { parseNcx(it, opfDir) }.orEmpty()
+    }
+
+    /** EPUB 3: <nav epub:type="toc"> ... <a href="ch1.xhtml">Chapter One</a> */
+    private fun parseNavDoc(markup: String, navPath: String): Map<String, String> {
+        val navBlock = Regex(
+            "(?is)<nav[^>]*epub:type\\s*=\\s*[\"'][^\"']*\\btoc\\b[^\"']*[\"'][^>]*>(.*?)</nav>"
+        ).find(markup)?.groupValues?.get(1) ?: return emptyMap()
+
+        val navDir = navPath.substringBeforeLast('/', "")
+        val out = LinkedHashMap<String, String>()
+
+        for (m in Regex("(?is)<a[^>]*href\\s*=\\s*[\"']([^\"']+)[\"'][^>]*>(.*?)</a>").findAll(navBlock)) {
+            val href = m.groupValues[1].substringBefore('#').trim()
+            val label = cleanLabel(m.groupValues[2])
+            if (href.isBlank() || label.isBlank()) continue
+            val full = if (navDir.isEmpty()) href else "$navDir/$href"
+            out.putIfAbsent(full, label)
+        }
+        return out
+    }
+
+    /** EPUB 2: <navPoint><navLabel><text>..</text></navLabel><content src=".."/> */
+    private fun parseNcx(markup: String, opfDir: String): Map<String, String> {
+        val out = LinkedHashMap<String, String>()
+        for (m in Regex("(?is)<navPoint[^>]*>(.*?)</navPoint>").findAll(markup)) {
+            val block = m.groupValues[1]
+            val label = Regex("(?is)<text[^>]*>(.*?)</text>")
+                .find(block)?.groupValues?.get(1)?.let { cleanLabel(it) } ?: continue
+            val src = Regex("(?is)<content[^>]*src\\s*=\\s*[\"']([^\"']+)[\"']")
+                .find(block)?.groupValues?.get(1)?.substringBefore('#')?.trim() ?: continue
+            if (label.isBlank() || src.isBlank()) continue
+            val full = if (opfDir.isEmpty()) src else "$opfDir/$src"
+            out.putIfAbsent(full, label)
+        }
+        return out
+    }
+
+    private fun cleanLabel(raw: String): String =
+        unescape(raw.replace(Regex("(?s)<[^>]+>"), " "))
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .take(120)
+
 }

@@ -6,14 +6,22 @@ import androidx.lifecycle.viewModelScope
 import dev.recto.reader.data.BookRepository
 import dev.recto.reader.data.EpubBook
 import dev.recto.reader.data.EpubLoader
+import dev.recto.reader.data.LineSpacing
+import dev.recto.reader.data.PageMargin
+import dev.recto.reader.data.ReaderFont
+import dev.recto.reader.data.ReaderSettings
+import dev.recto.reader.data.ReaderTheme
+import dev.recto.reader.data.SettingsRepository
 import dev.recto.reader.data.db.BookEntity
 import dev.recto.reader.data.db.RectoDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -28,9 +36,16 @@ sealed interface ReaderState {
     ) : ReaderState
 }
 
+/** Which overlay, if any, is showing over the page. */
+enum class ReaderSheet { NONE, SETTINGS, CONTENTS }
+
 class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     private val repo = BookRepository(app, RectoDatabase.get(app).bookDao())
+    private val settingsRepo = SettingsRepository(app)
+
+    val settings: StateFlow<ReaderSettings> = settingsRepo.settings
+        .stateIn(viewModelScope, SharingStarted.Eagerly, ReaderSettings())
 
     private val _state = MutableStateFlow<ReaderState>(ReaderState.Loading)
     val state: StateFlow<ReaderState> = _state.asStateFlow()
@@ -40,6 +55,9 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _chromeVisible = MutableStateFlow(false)
     val chromeVisible: StateFlow<Boolean> = _chromeVisible.asStateFlow()
+
+    private val _sheet = MutableStateFlow(ReaderSheet.NONE)
+    val sheet: StateFlow<ReaderSheet> = _sheet.asStateFlow()
 
     private var bookId: Long = -1
     private var saveJob: Job? = null
@@ -80,6 +98,65 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // --- table of contents --------------------------------------------------
+
+    /**
+     * Chapter list for the contents sheet, with each chapter's position in the
+     * book as a percentage. Chapters with no title get a numbered placeholder
+     * rather than being hidden, so the list always matches the book.
+     */
+    fun tableOfContents(): List<TocEntry> {
+        val content = (_state.value as? ReaderState.Ready)?.content ?: return emptyList()
+        val total = content.totalChars.coerceAtLeast(1)
+        var running = 0
+        return content.chapters.mapIndexed { index, chapter ->
+            val percent = (running * 100 / total).coerceIn(0, 100)
+            running += chapter.text.length
+            TocEntry(
+                chapterIndex = index,
+                title = chapter.title?.takeIf { it.isNotBlank() } ?: "Chapter ${index + 1}",
+                percent = percent
+            )
+        }
+    }
+
+    /** Which chapter the current page belongs to, for highlighting in the TOC. */
+    fun currentChapterIndex(): Int {
+        val pages = (_state.value as? ReaderState.Ready)?.pages ?: return 0
+        return pages.getOrNull(_pageIndex.value)?.chapterIndex ?: 0
+    }
+
+    fun goToChapter(entry: TocEntry) {
+        val pages = (_state.value as? ReaderState.Ready)?.pages ?: return
+        val target = pages.indexOfFirst { it.chapterIndex == entry.chapterIndex }
+        if (target >= 0) {
+            _pageIndex.value = target
+            scheduleSave()
+        }
+        _sheet.value = ReaderSheet.NONE
+    }
+
+    // --- settings -----------------------------------------------------------
+
+    fun setTheme(theme: ReaderTheme) = viewModelScope.launch { settingsRepo.setTheme(theme) }
+    fun setFont(font: ReaderFont) = viewModelScope.launch { settingsRepo.setFont(font) }
+    fun setFontSize(sp: Int) = viewModelScope.launch { settingsRepo.setFontSize(sp) }
+    fun setLineSpacing(v: LineSpacing) = viewModelScope.launch { settingsRepo.setLineSpacing(v) }
+    fun setMargin(v: PageMargin) = viewModelScope.launch { settingsRepo.setMargin(v) }
+    fun setJustify(v: Boolean) = viewModelScope.launch { settingsRepo.setJustify(v) }
+    fun setVolumeKeys(v: Boolean) = viewModelScope.launch { settingsRepo.setVolumeKeys(v) }
+    fun setKeepScreenOn(v: Boolean) = viewModelScope.launch { settingsRepo.setKeepScreenOn(v) }
+
+    fun showSheet(which: ReaderSheet) {
+        _sheet.value = which
+    }
+
+    fun dismissSheet() {
+        _sheet.value = ReaderSheet.NONE
+    }
+
+    // --- pagination ---------------------------------------------------------
+
     /** Called by the reader once it knows its own size. */
     fun onPaginated(pages: List<Page>) {
         val ready = _state.value as? ReaderState.Ready ?: return
@@ -95,13 +172,15 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Re-anchors the reading position after a re-pagination (rotation, font
-     * size change). We store a character offset rather than a page number
-     * precisely so the position survives a different page count.
+     * Re-anchors the reading position before a re-pagination (rotation, font
+     * size change, margin change). We store a character offset rather than a
+     * page number precisely so the position survives a different page count -
+     * bumping the text size must not lose your place.
      */
     fun rememberPositionBeforeRepaginate() {
         val ready = _state.value as? ReaderState.Ready ?: return
         val pages = ready.pages ?: return
+        if (pages.isEmpty()) return
         pendingRestoreChar = globalCharForPage(pages, ready.content, _pageIndex.value)
     }
 
@@ -128,10 +207,6 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     fun toggleChrome() {
         _chromeVisible.value = !_chromeVisible.value
-    }
-
-    fun hideChrome() {
-        _chromeVisible.value = false
     }
 
     /**

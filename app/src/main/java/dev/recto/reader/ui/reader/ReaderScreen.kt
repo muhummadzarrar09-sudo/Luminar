@@ -52,11 +52,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import dev.recto.reader.data.ReaderFont
+import dev.recto.reader.data.ReaderSettings
 import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-private val PageHorizontalPadding = 26.dp
 private val PageVerticalPadding = 20.dp
 
 @Composable
@@ -68,6 +69,8 @@ fun ReaderScreen(
     val state by vm.state.collectAsStateWithLifecycle()
     val pageIndex by vm.pageIndex.collectAsStateWithLifecycle()
     val chromeVisible by vm.chromeVisible.collectAsStateWithLifecycle()
+    val settings by vm.settings.collectAsStateWithLifecycle()
+    val sheet by vm.sheet.collectAsStateWithLifecycle()
 
     LaunchedEffect(bookId) { vm.load(bookId) }
 
@@ -76,9 +79,12 @@ fun ReaderScreen(
         onBack()
     }
 
+    // The page owns the whole screen, so the surface takes the reading theme
+    // rather than the app theme. That is what makes Sepia and Black actually
+    // feel like a different page instead of a tinted panel.
     Surface(
         modifier = Modifier.fillMaxSize(),
-        color = MaterialTheme.colorScheme.background
+        color = settings.theme.background
     ) {
         when (val s = state) {
             is ReaderState.Loading -> Centered { CircularProgressIndicator() }
@@ -91,13 +97,13 @@ fun ReaderScreen(
                     Text(
                         text = "Cannot open this book",
                         style = MaterialTheme.typography.titleLarge,
-                        color = MaterialTheme.colorScheme.onBackground
+                        color = settings.theme.text
                     )
                     Spacer(Modifier.height(10.dp))
                     Text(
                         text = s.message,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = settings.theme.muted,
                         textAlign = TextAlign.Center
                     )
                     Spacer(Modifier.height(20.dp))
@@ -109,6 +115,7 @@ fun ReaderScreen(
                 state = s,
                 pageIndex = pageIndex,
                 chromeVisible = chromeVisible,
+                settings = settings,
                 vm = vm,
                 onBack = {
                     vm.persistNow()
@@ -117,6 +124,30 @@ fun ReaderScreen(
             )
         }
     }
+
+    when (sheet) {
+        ReaderSheet.SETTINGS -> ReaderSettingsSheet(
+            settings = settings,
+            onTheme = vm::setTheme,
+            onFont = vm::setFont,
+            onFontSize = vm::setFontSize,
+            onLineSpacing = vm::setLineSpacing,
+            onMargin = vm::setMargin,
+            onJustify = vm::setJustify,
+            onVolumeKeys = vm::setVolumeKeys,
+            onKeepScreenOn = vm::setKeepScreenOn,
+            onDismiss = vm::dismissSheet
+        )
+
+        ReaderSheet.CONTENTS -> TableOfContentsSheet(
+            entries = vm.tableOfContents(),
+            currentChapter = vm.currentChapterIndex(),
+            onSelect = vm::goToChapter,
+            onDismiss = vm::dismissSheet
+        )
+
+        ReaderSheet.NONE -> Unit
+    }
 }
 
 @Composable
@@ -124,33 +155,42 @@ private fun ReaderContent(
     state: ReaderState.Ready,
     pageIndex: Int,
     chromeVisible: Boolean,
+    settings: ReaderSettings,
     vm: ReaderViewModel,
     onBack: () -> Unit
 ) {
     val measurer = rememberTextMeasurer()
     val density = LocalDensity.current
 
-    val readingStyle = remember {
+    // Derived from settings, so any typography change produces a new style
+    // object and therefore a re-pagination.
+    val readingStyle = remember(settings) {
         TextStyle(
-            fontFamily = FontFamily.Serif,
-            fontSize = 18.sp,
-            lineHeight = 30.sp,
-            textAlign = TextAlign.Justify
+            fontFamily = when (settings.font) {
+                ReaderFont.SERIF -> FontFamily.Serif
+                ReaderFont.SANS -> FontFamily.SansSerif
+                ReaderFont.MONO -> FontFamily.Monospace
+            },
+            fontSize = settings.fontSizeSp.sp,
+            lineHeight = (settings.fontSizeSp * settings.lineSpacing.multiplier).sp,
+            textAlign = if (settings.justify) TextAlign.Justify else TextAlign.Start,
+            color = settings.theme.text
         )
     }
+
+    val horizontalPadding = settings.margin.sizeDp.dp
 
     var areaWidth by remember { mutableStateOf(0) }
     var areaHeight by remember { mutableStateOf(0) }
 
-    // Re-paginate whenever the usable area changes: first layout, rotation,
-    // or (later) a font-size change. Position is preserved by character
-    // offset, not page number.
-    LaunchedEffect(areaWidth, areaHeight, state.content) {
+    // Re-paginate on any change to the usable area or the typography.
+    // Position survives because it is anchored to a character offset.
+    LaunchedEffect(areaWidth, areaHeight, state.content, readingStyle, horizontalPadding) {
         if (areaWidth <= 0 || areaHeight <= 0) return@LaunchedEffect
 
         vm.rememberPositionBeforeRepaginate()
 
-        val hPad = with(density) { PageHorizontalPadding.roundToPx() } * 2
+        val hPad = with(density) { horizontalPadding.roundToPx() } * 2
         val vPad = with(density) { PageVerticalPadding.roundToPx() } * 2
 
         val pages = withContext(Dispatchers.Default) {
@@ -167,6 +207,18 @@ private fun ReaderContent(
 
     val pages = state.pages
 
+    // Hardware volume keys turn pages. These are intercepted at the Activity
+    // level via VolumeKeyHandler - Compose's onKeyEvent never sees them,
+    // because the system routes volume keys to the window before focus
+    // targets get a look in.
+    VolumeKeyPageTurns(
+        enabled = settings.volumeKeysTurnPages,
+        onNext = vm::next,
+        onPrevious = vm::previous
+    )
+
+    KeepScreenOn(enabled = settings.keepScreenOn)
+
     Box(
         Modifier
             .fillMaxSize()
@@ -179,16 +231,15 @@ private fun ReaderContent(
             Centered { CircularProgressIndicator() }
         } else if (pages.isEmpty()) {
             Centered {
-                Text(
-                    "This book appears to be empty.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Text("This book appears to be empty.", color = settings.theme.muted)
             }
         } else {
             PageSurface(
                 pages = pages,
                 pageIndex = pageIndex,
                 style = readingStyle,
+                background = settings.theme.background,
+                horizontalPadding = horizontalPadding,
                 onNext = vm::next,
                 onPrevious = vm::previous,
                 onToggleChrome = vm::toggleChrome
@@ -202,27 +253,32 @@ private fun ReaderContent(
             exit = slideOutVertically { -it } + fadeOut(),
             modifier = Modifier.align(Alignment.TopCenter)
         ) {
-            Surface(
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 3.dp,
-                shadowElevation = 4.dp
-            ) {
+            Surface(tonalElevation = 3.dp, shadowElevation = 4.dp) {
                 Row(
                     Modifier
                         .fillMaxWidth()
                         .statusBarsPadding()
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                        .padding(horizontal = 4.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     TextButton(onClick = onBack) { Text("Back") }
-                    Spacer(Modifier.weight(1f))
+
                     Text(
                         text = state.content.title ?: state.book.title,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
-                        modifier = Modifier.padding(end = 12.dp)
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 8.dp)
                     )
+
+                    TextButton(onClick = { vm.showSheet(ReaderSheet.CONTENTS) }) {
+                        Text("Contents")
+                    }
+                    TextButton(onClick = { vm.showSheet(ReaderSheet.SETTINGS) }) {
+                        Text("Aa", style = MaterialTheme.typography.titleLarge)
+                    }
                 }
             }
         }
@@ -235,11 +291,7 @@ private fun ReaderContent(
                 exit = slideOutVertically { it } + fadeOut(),
                 modifier = Modifier.align(Alignment.BottomCenter)
             ) {
-                Surface(
-                    color = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 3.dp,
-                    shadowElevation = 4.dp
-                ) {
+                Surface(tonalElevation = 3.dp, shadowElevation = 4.dp) {
                     Column(
                         Modifier
                             .fillMaxWidth()
@@ -297,7 +349,8 @@ private fun ReaderContent(
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .height(2.dp),
-                trackColor = MaterialTheme.colorScheme.background
+                color = settings.theme.muted,
+                trackColor = settings.theme.background
             )
         }
     }
@@ -308,6 +361,8 @@ private fun PageSurface(
     pages: List<Page>,
     pageIndex: Int,
     style: TextStyle,
+    background: androidx.compose.ui.graphics.Color,
+    horizontalPadding: androidx.compose.ui.unit.Dp,
     onNext: () -> Unit,
     onPrevious: () -> Unit,
     onToggleChrome: () -> Unit
@@ -361,20 +416,16 @@ private fun PageSurface(
             Box(
                 Modifier
                     .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.background)
+                    .background(background)
                     .statusBarsPadding()
                     .navigationBarsPadding()
                     .padding(
-                        horizontal = PageHorizontalPadding,
+                        horizontal = horizontalPadding,
                         vertical = PageVerticalPadding
                     )
             ) {
                 if (page != null) {
-                    Text(
-                        text = page.text,
-                        style = style,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
+                    Text(text = page.text, style = style)
                 }
             }
         }

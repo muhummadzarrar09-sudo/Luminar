@@ -2,6 +2,7 @@ package dev.recto.reader
 
 import android.content.Intent
 import android.os.Bundle
+import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -16,6 +17,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.recto.reader.ui.library.LibraryScreen
 import dev.recto.reader.ui.library.LibraryViewModel
 import dev.recto.reader.ui.reader.ReaderScreen
+import dev.recto.reader.ui.reader.VolumeKeyHandler
 import dev.recto.reader.ui.theme.RectoTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 
@@ -50,6 +52,36 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         incoming.value = intent
+    }
+
+    /**
+     * Set by the reader while it is on screen, cleared when it leaves.
+     * Null means volume keys behave normally.
+     */
+    var volumeKeyHandler: VolumeKeyHandler? = null
+
+    /**
+     * Volume keys are delivered to the window before any Compose focus target
+     * sees them, so page-turning has to be intercepted here.
+     *
+     * Only KeyDown is acted on; the matching KeyUp is still consumed so the
+     * system volume UI does not flash on screen.
+     */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val handler = volumeKeyHandler
+        if (handler != null) {
+            when (event.keyCode) {
+                KeyEvent.KEYCODE_VOLUME_DOWN -> {
+                    if (event.action == KeyEvent.ACTION_DOWN) handler.onVolumeDown()
+                    return true
+                }
+                KeyEvent.KEYCODE_VOLUME_UP -> {
+                    if (event.action == KeyEvent.ACTION_DOWN) handler.onVolumeUp()
+                    return true
+                }
+            }
+        }
+        return super.dispatchKeyEvent(event)
     }
 }
 
