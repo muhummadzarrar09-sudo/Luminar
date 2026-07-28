@@ -2,6 +2,8 @@ package dev.recto.reader.ui.reader
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -76,6 +78,17 @@ fun ReaderSettingsSheet(
         Column(
             Modifier
                 .fillMaxWidth()
+                // The sheet has more content than fits on a phone - and far
+                // more than fits in landscape, where the usable height is
+                // barely 200dp. Without this the bottom controls are simply
+                // unreachable: a Column clips, it does not scroll.
+                //
+                // weight(1f) lets the Column take the space the sheet
+                // actually has and no more, so verticalScroll has a bounded
+                // height to scroll within. Without the weight it would be
+                // measured unbounded and never scroll.
+                .weight(1f, fill = false)
+                .verticalScroll(rememberScrollState())
                 .navigationBarsPadding()
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 20.dp)
