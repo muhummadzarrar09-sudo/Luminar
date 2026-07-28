@@ -126,9 +126,13 @@ abstract class RectoDatabase : RoomDatabase() {
                     "recto.db"
                 )
                     .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
-                    // Be explicit: ON DELETE CASCADE is a no-op unless the
-                    // SQLite connection has foreign keys switched on.
-                    .setForeignKeyConstraintsEnabled(true)
+                    // No setForeignKeyConstraintsEnabled call here: that is
+                    // not a RoomDatabase.Builder method, it belongs to
+                    // SQLiteDatabase. Room does not need it - when any entity
+                    // declares a @ForeignKey, the generated open helper runs
+                    // "PRAGMA foreign_keys = ON" itself on every connection,
+                    // so the CASCADE rules on BookCollectionCrossRef are
+                    // enforced.
                     .build()
                     .also { instance = it }
             }
