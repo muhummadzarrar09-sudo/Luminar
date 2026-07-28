@@ -23,6 +23,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -60,6 +61,10 @@ fun ReaderSettingsSheet(
     onJustify: (Boolean) -> Unit,
     onVolumeKeys: (Boolean) -> Unit,
     onKeepScreenOn: (Boolean) -> Unit,
+    onWarmth: (Float) -> Unit,
+    onDim: (Float) -> Unit,
+    onUseReaderBrightness: (Boolean) -> Unit,
+    onBrightness: (Float) -> Unit,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -117,6 +122,57 @@ fun ReaderSettingsSheet(
                 ) {
                     Text("A", fontSize = 22.sp)
                 }
+            }
+
+            Spacer(Modifier.height(22.dp))
+
+            SectionLabel("Comfort")
+
+            LabelledSlider(
+                label = "Warmth",
+                detail = "Amber tint. Helps you sleep after reading at night.",
+                value = settings.warmth,
+                onChange = onWarmth
+            )
+
+            Spacer(Modifier.height(10.dp))
+
+            LabelledSlider(
+                label = "Extra dim",
+                detail = "Goes darker than the phone's own minimum.",
+                value = settings.dim,
+                onChange = onDim
+            )
+
+            Spacer(Modifier.height(10.dp))
+
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable { onUseReaderBrightness(!settings.useReaderBrightness) }
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Reader brightness", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "Set brightness just for Recto",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = settings.useReaderBrightness,
+                    onCheckedChange = onUseReaderBrightness
+                )
+            }
+
+            if (settings.useReaderBrightness) {
+                Slider(
+                    value = settings.brightness,
+                    onValueChange = onBrightness,
+                    valueRange = 0f..1f
+                )
             }
 
             Spacer(Modifier.height(22.dp))
@@ -205,6 +261,32 @@ fun ReaderSettingsSheet(
                 Switch(checked = settings.keepScreenOn, onCheckedChange = onKeepScreenOn)
             }
         }
+    }
+}
+
+/** A slider with a name and a one-line explanation of what it actually does. */
+@Composable
+private fun LabelledSlider(
+    label: String,
+    detail: String,
+    value: Float,
+    onChange: (Float) -> Unit
+) {
+    Column(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+            Text(
+                text = "${(value * 100).toInt()}%",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Text(
+            text = detail,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Slider(value = value, onValueChange = onChange, valueRange = 0f..1f)
     }
 }
 

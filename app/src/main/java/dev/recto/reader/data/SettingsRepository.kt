@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -35,6 +36,10 @@ class SettingsRepository(private val context: Context) {
         val followSystemDark = booleanPreferencesKey("follow_system_dark")
         val keepScreenOn = booleanPreferencesKey("keep_screen_on")
         val volumeKeys = booleanPreferencesKey("volume_keys")
+        val warmth = floatPreferencesKey("warmth")
+        val dim = floatPreferencesKey("dim")
+        val useReaderBrightness = booleanPreferencesKey("use_reader_brightness")
+        val brightness = floatPreferencesKey("brightness")
     }
 
     val settings: Flow<ReaderSettings> = context.settingsStore.data
@@ -53,7 +58,11 @@ class SettingsRepository(private val context: Context) {
                 justify = prefs[Keys.justify] ?: true,
                 followSystemDark = prefs[Keys.followSystemDark] ?: false,
                 keepScreenOn = prefs[Keys.keepScreenOn] ?: true,
-                volumeKeysTurnPages = prefs[Keys.volumeKeys] ?: true
+                volumeKeysTurnPages = prefs[Keys.volumeKeys] ?: true,
+                warmth = (prefs[Keys.warmth] ?: 0f).coerceIn(0f, 1f),
+                dim = (prefs[Keys.dim] ?: 0f).coerceIn(0f, 1f),
+                useReaderBrightness = prefs[Keys.useReaderBrightness] ?: false,
+                brightness = (prefs[Keys.brightness] ?: 0.5f).coerceIn(0f, 1f)
             )
         }
 
@@ -76,6 +85,16 @@ class SettingsRepository(private val context: Context) {
     suspend fun setKeepScreenOn(value: Boolean) = edit { it[Keys.keepScreenOn] = value }
 
     suspend fun setVolumeKeys(value: Boolean) = edit { it[Keys.volumeKeys] = value }
+
+    suspend fun setWarmth(value: Float) = edit { it[Keys.warmth] = value.coerceIn(0f, 1f) }
+
+    suspend fun setDim(value: Float) = edit { it[Keys.dim] = value.coerceIn(0f, 1f) }
+
+    suspend fun setUseReaderBrightness(value: Boolean) =
+        edit { it[Keys.useReaderBrightness] = value }
+
+    suspend fun setBrightness(value: Float) =
+        edit { it[Keys.brightness] = value.coerceIn(0f, 1f) }
 
     private suspend fun edit(block: (MutablePreferences) -> Unit) {
         context.settingsStore.edit(block)

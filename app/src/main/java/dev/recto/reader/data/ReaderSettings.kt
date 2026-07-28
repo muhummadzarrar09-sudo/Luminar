@@ -111,7 +111,28 @@ data class ReaderSettings(
     /** Follow the system dark theme instead of a fixed page colour. */
     val followSystemDark: Boolean = false,
     val keepScreenOn: Boolean = true,
-    val volumeKeysTurnPages: Boolean = true
+    val volumeKeysTurnPages: Boolean = true,
+
+    /**
+     * Amber tint over the page, 0..1. Good evidence for protecting sleep when
+     * reading at night; little evidence it reduces eye strain by itself.
+     */
+    val warmth: Float = 0f,
+
+    /**
+     * Extra dimming below the phone's hardware minimum, 0..1. This is the
+     * lever that actually helps comfort in a dark room.
+     */
+    val dim: Float = 0f,
+
+    /**
+     * Take over the screen backlight while reading. Off means the system
+     * brightness applies as normal.
+     */
+    val useReaderBrightness: Boolean = false,
+
+    /** Backlight level when [useReaderBrightness] is on, 0..1. */
+    val brightness: Float = 0.5f
 ) {
     companion object {
         const val MIN_FONT_SP = 12

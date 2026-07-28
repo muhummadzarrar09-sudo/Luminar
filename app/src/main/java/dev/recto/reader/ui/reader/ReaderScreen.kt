@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.CircularProgressIndicator
@@ -43,7 +44,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -136,6 +136,10 @@ fun ReaderScreen(
             onJustify = vm::setJustify,
             onVolumeKeys = vm::setVolumeKeys,
             onKeepScreenOn = vm::setKeepScreenOn,
+            onWarmth = vm::setWarmth,
+            onDim = vm::setDim,
+            onUseReaderBrightness = vm::setUseReaderBrightness,
+            onBrightness = vm::setBrightness,
             onDismiss = vm::dismissSheet
         )
 
@@ -160,7 +164,6 @@ private fun ReaderContent(
     onBack: () -> Unit
 ) {
     val measurer = rememberTextMeasurer()
-    val density = LocalDensity.current
 
     // Derived from settings, so any typography change produces a new style
     // object and therefore a re-pagination.
@@ -180,26 +183,32 @@ private fun ReaderContent(
 
     val horizontalPadding = settings.margin.sizeDp.dp
 
-    var areaWidth by remember { mutableStateOf(0) }
-    var areaHeight by remember { mutableStateOf(0) }
+    // The size of the text area AFTER system-bar insets and margins have been
+    // taken out. Measured from the very box the text is drawn in, rather than
+    // computed from the screen size.
+    //
+    // This is what the landscape bug was: pagination measured the full screen
+    // while the page applied statusBarsPadding + navigationBarsPadding inside
+    // it, so the text box was always smaller than the box we paginated for.
+    // In portrait the difference hid inside the margins; in landscape the
+    // navigation bar moves to the side and the last lines fell off the page.
+    var textAreaWidth by remember { mutableStateOf(0) }
+    var textAreaHeight by remember { mutableStateOf(0) }
 
     // Re-paginate on any change to the usable area or the typography.
     // Position survives because it is anchored to a character offset.
-    LaunchedEffect(areaWidth, areaHeight, state.content, readingStyle, horizontalPadding) {
-        if (areaWidth <= 0 || areaHeight <= 0) return@LaunchedEffect
+    LaunchedEffect(textAreaWidth, textAreaHeight, state.content, readingStyle) {
+        if (textAreaWidth <= 0 || textAreaHeight <= 0) return@LaunchedEffect
 
         vm.rememberPositionBeforeRepaginate()
-
-        val hPad = with(density) { horizontalPadding.roundToPx() } * 2
-        val vPad = with(density) { PageVerticalPadding.roundToPx() } * 2
 
         val pages = withContext(Dispatchers.Default) {
             Paginator.paginate(
                 chapters = state.content.chapters.map { it.text },
                 measurer = measurer,
                 style = readingStyle,
-                widthPx = (areaWidth - hPad).coerceAtLeast(1),
-                heightPx = (areaHeight - vPad).coerceAtLeast(1)
+                widthPx = textAreaWidth,
+                heightPx = textAreaHeight
             )
         }
         vm.onPaginated(pages)
@@ -219,14 +228,32 @@ private fun ReaderContent(
 
     KeepScreenOn(enabled = settings.keepScreenOn)
 
-    Box(
-        Modifier
-            .fillMaxSize()
-            .onSizeChanged {
-                areaWidth = it.width
-                areaHeight = it.height
-            }
-    ) {
+    WindowBrightness(
+        level = if (settings.useReaderBrightness) settings.brightness else null
+    )
+
+    Box(Modifier.fillMaxSize()) {
+
+        // An invisible stand-in for the text box, laid out with exactly the
+        // same insets and margins. It is always present, so it can report the
+        // text-area size before any page exists.
+        //
+        // Without it there is a deadlock: pages are null so we show a spinner,
+        // the spinner is not the text box, nothing reports a size, and pages
+        // stay null forever.
+        Box(
+            Modifier
+                .fillMaxSize()
+                .safeDrawingPadding()
+                .padding(horizontal = horizontalPadding, vertical = PageVerticalPadding)
+                .onSizeChanged { size ->
+                    if (size.width > 0 && size.height > 0) {
+                        textAreaWidth = size.width
+                        textAreaHeight = size.height
+                    }
+                }
+        )
+
         if (pages == null) {
             Centered { CircularProgressIndicator() }
         } else if (pages.isEmpty()) {
@@ -245,6 +272,13 @@ private fun ReaderContent(
                 onToggleChrome = vm::toggleChrome
             )
         }
+
+        // Warmth and dimming go directly over the page and nothing else.
+        // Composed here - after the page, before the chrome - so the toolbar
+        // and scrubber stay legible while you drag the sliders. Overlaying the
+        // controls too would make the sliders progressively harder to read the
+        // more warmth you applied, which is the opposite of helpful.
+        EyeComfortOverlay(warmth = settings.warmth, dim = settings.dim)
 
         // Top chrome
         AnimatedVisibility(
@@ -417,8 +451,10 @@ private fun PageSurface(
                 Modifier
                     .fillMaxSize()
                     .background(background)
-                    .statusBarsPadding()
-                    .navigationBarsPadding()
+                    // Insets first, then margins. Whatever survives all of
+                    // that is exactly the box the text gets, so that is the
+                    // box we measure and paginate against.
+                    .safeDrawingPadding()
                     .padding(
                         horizontal = horizontalPadding,
                         vertical = PageVerticalPadding

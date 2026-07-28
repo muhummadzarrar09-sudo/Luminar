@@ -146,6 +146,11 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     fun setJustify(v: Boolean) = viewModelScope.launch { settingsRepo.setJustify(v) }
     fun setVolumeKeys(v: Boolean) = viewModelScope.launch { settingsRepo.setVolumeKeys(v) }
     fun setKeepScreenOn(v: Boolean) = viewModelScope.launch { settingsRepo.setKeepScreenOn(v) }
+    fun setWarmth(v: Float) = viewModelScope.launch { settingsRepo.setWarmth(v) }
+    fun setDim(v: Float) = viewModelScope.launch { settingsRepo.setDim(v) }
+    fun setUseReaderBrightness(v: Boolean) =
+        viewModelScope.launch { settingsRepo.setUseReaderBrightness(v) }
+    fun setBrightness(v: Float) = viewModelScope.launch { settingsRepo.setBrightness(v) }
 
     fun showSheet(which: ReaderSheet) {
         _sheet.value = which
