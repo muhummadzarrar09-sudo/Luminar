@@ -1,0 +1,87 @@
+﻿
+==============================================================
+  RECTO - BUILD ENVIRONMENT DOCTOR
+==============================================================
+  Run at        : 2026-07-27 05:51
+  Script folder : D:\fun projects out of boredom\Luminar
+  Repo root     : D:\fun projects out of boredom\Luminar
+
+==============================================================
+  1. System
+==============================================================
+  OS            : Microsoft Windows NT 10.0.26200.0
+  Architecture  : AMD64
+  PowerShell    : 5.1.26100.8875  (edition: Desktop)
+  User          : M.Zarrar
+  Free disk     : 138.6 GB on D:
+  [ OK ] Enough disk space.
+
+==============================================================
+  2. Java (JDK)
+==============================================================
+  java on PATH  : C:\Program Files\Eclipse Adoptium\jdk-17.0.19.10-hotspot\bin\java.exe
+         java.exe : openjdk version "17.0.19" 2026-04-21
+         At D:\fun projects out of boredom\Luminar\recto-doctor.ps1:85 char:13
+         +     $raw = (& java -version 2>&1 | Out-String).Trim()
+         +             ~~~~~~~~~~~~~~~~~~~~
+         + CategoryInfo          : NotSpecified: (openjdk version "17.0.19" 202
+         6-04-21:String) [], RemoteException
+         + FullyQualifiedErrorId : NativeCommandError
+         
+         OpenJDK Runtime Environment Temurin-17.0.19+10 (build 17.0.19+10)
+         OpenJDK 64-Bit Server VM Temurin-17.0.19+10 (build 17.0.19+10, mixed mode,
+         sharing)
+  Major version : 17
+  [ OK ] JDK 17 - exactly what AGP 9.3 wants.
+  [ ?? ] JAVA_HOME is not set. Gradle usually copes if java is on PATH.
+
+  Other JDKs on this machine:
+         C:\Program Files\Eclipse Adoptium\jdk-17.0.19.10-hotspot
+         C:\Program Files\Java\jre-1.8
+
+==============================================================
+  3. Android Studio
+==============================================================
+  [ ?? ] Android Studio not found in the usual locations.
+         Not required to build. It only decides which setup path we take.
+         If it is installed somewhere unusual, tell me the path.
+  => Setup path (a): I generate everything, the script bootstraps it.
+
+==============================================================
+  4. Android SDK
+==============================================================
+  [ OK ] SDK found: C:\Users\M.Zarrar\AppData\Local\Android\Sdk
+  [ ?? ] ANDROID_HOME is not set (found the SDK by guessing).
+         Set it to: C:\Users\M.Zarrar\AppData\Local\Android\Sdk
+  Platforms     : android-33, android-34, android-35, android-36
+  [ OK ] android-36 present (our compileSdk).
+  Build-tools   : 34.0.0, 35.0.0, 36.0.0
+  [ OK ] Build-tools 36.x present (AGP 9.3 minimum).
+  [ OK ] adb found: C:\Users\M.Zarrar\AppData\Local\Android\Sdk\platform-tools\adb.exe
+  [ OK ] Device(s) connected:
+  [ ?? ] Could not run 'adb devices'.
+  [ OK ] SDK licenses directory present.
+
+==============================================================
+  5. Project state
+==============================================================
+         absent: settings.gradle.kts  (Gradle settings)
+         absent: gradlew.bat  (Gradle wrapper (Windows))
+         absent: gradle\wrapper\gradle-wrapper.jar  (Wrapper JAR)
+         absent: gradle\wrapper\gradle-wrapper.properties  (Wrapper properties)
+         absent: gradle\libs.versions.toml  (Version catalog)
+         absent: local.properties  (local.properties (SDK path))
+         All absent is EXPECTED. Phase 0 has not been scaffolded yet.
+
+==============================================================
+  6. Git
+==============================================================
+  [ OK ] git 2.55.0.windows.2
+  Branch        : main
+
+==============================================================
+  7. VERDICT
+==============================================================
+  No blockers found. This machine can build Recto.
+
+  RECOMMENDED: path (a) - I generate it all, you run recto-build.ps1.
