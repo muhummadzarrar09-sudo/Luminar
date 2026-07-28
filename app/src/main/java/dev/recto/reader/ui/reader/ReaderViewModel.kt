@@ -12,12 +12,18 @@ import dev.recto.reader.data.ReaderFont
 import dev.recto.reader.data.ReaderSettings
 import dev.recto.reader.data.ReaderTheme
 import dev.recto.reader.data.SettingsRepository
+import dev.recto.reader.data.db.AnnotationDao
+import dev.recto.reader.data.db.AnnotationEntity
+import dev.recto.reader.data.db.AnnotationKind
 import dev.recto.reader.data.db.BookEntity
 import dev.recto.reader.data.db.RectoDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -37,12 +43,35 @@ sealed interface ReaderState {
 }
 
 /** Which overlay, if any, is showing over the page. */
-enum class ReaderSheet { NONE, SETTINGS, CONTENTS }
+enum class ReaderSheet { NONE, SETTINGS, CONTENTS, NOTEBOOK }
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
-    private val repo = BookRepository(app, RectoDatabase.get(app).bookDao())
+    private val db = RectoDatabase.get(app)
+    private val repo = BookRepository(app, db.bookDao())
     private val settingsRepo = SettingsRepository(app)
+    private val annotationDao: AnnotationDao = db.annotationDao()
+
+    private val _bookIdFlow = MutableStateFlow(-1L)
+
+    /** Every highlight, note and bookmark for the open book. */
+    val annotations: StateFlow<List<AnnotationEntity>> = _bookIdFlow
+        .flatMapLatest { id ->
+            if (id <= 0) emptyFlow() else annotationDao.observeForBook(id)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /**
+     * Live text selection, as absolute character offsets into the book.
+     * Non-null means the selection toolbar is showing.
+     */
+    private val _selection = MutableStateFlow<IntRange?>(null)
+    val selection: StateFlow<IntRange?> = _selection.asStateFlow()
+
+    /** Annotation currently being edited in the note dialog. */
+    private val _editingNote = MutableStateFlow<AnnotationEntity?>(null)
+    val editingNote: StateFlow<AnnotationEntity?> = _editingNote.asStateFlow()
 
     val settings: StateFlow<ReaderSettings> = settingsRepo.settings
         .stateIn(viewModelScope, SharingStarted.Eagerly, ReaderSettings())
@@ -68,6 +97,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     fun load(id: Long) {
         if (bookId == id && _state.value is ReaderState.Ready) return
         bookId = id
+        _bookIdFlow.value = id
 
         viewModelScope.launch {
             _state.value = ReaderState.Loading
@@ -134,6 +164,228 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             scheduleSave()
         }
         _sheet.value = ReaderSheet.NONE
+    }
+
+    // --- annotations --------------------------------------------------------
+
+    /**
+     * Absolute character offset of the start of the current page. Everything
+     * annotation-related works in absolute book offsets, so a highlight
+     * survives re-pagination the same way a reading position does.
+     */
+    fun pageStartChar(): Int {
+        val ready = _state.value as? ReaderState.Ready ?: return 0
+        val pages = ready.pages ?: return 0
+        return globalCharForPage(pages, ready.content, _pageIndex.value)
+    }
+
+    /** Absolute book offset of the first character on a given page. */
+    fun pageStartOf(index: Int): Int {
+        val ready = _state.value as? ReaderState.Ready ?: return 0
+        val pages = ready.pages ?: return 0
+        return globalCharForPage(pages, ready.content, index)
+    }
+
+    fun setSelection(range: IntRange?) {
+        _selection.value = range
+    }
+
+    fun clearSelection() {
+        _selection.value = null
+    }
+
+    /** The words currently selected, for the Copy action. */
+    fun selectedText(): String {
+        val range = _selection.value ?: return ""
+        val ready = _state.value as? ReaderState.Ready ?: return ""
+        return textBetween(ready, range.first, range.last)
+    }
+
+    /**
+     * Turns the current selection into a highlight.
+     *
+     * If it overlaps existing highlights, those are absorbed rather than
+     * stacked - selecting across two highlights and picking a colour should
+     * produce one highlight in that colour, not three overlapping spans.
+     * Notes on absorbed annotations are preserved.
+     */
+    fun highlightSelection(colour: Int) {
+        val range = _selection.value ?: return
+        val ready = _state.value as? ReaderState.Ready ?: return
+        val bookId = ready.book.id
+
+        viewModelScope.launch {
+            var start = range.first
+            var end = range.last
+            var keptNote: String? = null
+
+            val overlaps = annotationDao.overlapping(bookId, start, end)
+            overlaps.forEach { existing ->
+                start = minOf(start, existing.startChar)
+                end = maxOf(end, existing.endChar)
+                if (keptNote == null) keptNote = existing.note
+                annotationDao.delete(existing.id)
+            }
+
+            val text = textBetween(ready, start, end)
+            val chapter = chapterAt(ready, start)
+
+            annotationDao.insert(
+                AnnotationEntity(
+                    bookId = bookId,
+                    kind = if (keptNote.isNullOrBlank()) {
+                        AnnotationKind.HIGHLIGHT.name
+                    } else {
+                        AnnotationKind.NOTE.name
+                    },
+                    startChar = start,
+                    endChar = end,
+                    selectedText = text,
+                    note = keptNote,
+                    colour = colour,
+                    chapterIndex = chapter.first,
+                    chapterTitle = chapter.second
+                )
+            )
+            _selection.value = null
+        }
+    }
+
+    /** Opens the note editor for the selection, creating a highlight first. */
+    fun addNoteToSelection() {
+        val range = _selection.value ?: return
+        val ready = _state.value as? ReaderState.Ready ?: return
+
+        viewModelScope.launch {
+            val existing = annotationDao
+                .overlapping(ready.book.id, range.first, range.last)
+                .firstOrNull()
+
+            if (existing != null) {
+                _editingNote.value = existing
+            } else {
+                val text = textBetween(ready, range.first, range.last)
+                val chapter = chapterAt(ready, range.first)
+                val id = annotationDao.insert(
+                    AnnotationEntity(
+                        bookId = ready.book.id,
+                        kind = AnnotationKind.NOTE.name,
+                        startChar = range.first,
+                        endChar = range.last,
+                        selectedText = text,
+                        colour = 0,
+                        chapterIndex = chapter.first,
+                        chapterTitle = chapter.second
+                    )
+                )
+                _editingNote.value = AnnotationEntity(
+                    id = id,
+                    bookId = ready.book.id,
+                    kind = AnnotationKind.NOTE.name,
+                    startChar = range.first,
+                    endChar = range.last,
+                    selectedText = text,
+                    colour = 0,
+                    chapterIndex = chapter.first,
+                    chapterTitle = chapter.second
+                )
+            }
+            _selection.value = null
+        }
+    }
+
+    fun editNote(annotation: AnnotationEntity) {
+        _editingNote.value = annotation
+    }
+
+    fun saveNote(id: Long, note: String) {
+        viewModelScope.launch {
+            val trimmed = note.trim()
+            annotationDao.updateNote(
+                id = id,
+                note = trimmed.ifBlank { null },
+                // Emptying a note demotes it back to a plain highlight rather
+                // than leaving a NOTE with nothing written on it.
+                kind = if (trimmed.isBlank()) {
+                    AnnotationKind.HIGHLIGHT.name
+                } else {
+                    AnnotationKind.NOTE.name
+                }
+            )
+            _editingNote.value = null
+        }
+    }
+
+    fun dismissNoteEditor() {
+        _editingNote.value = null
+    }
+
+    fun deleteAnnotation(id: Long) {
+        viewModelScope.launch { annotationDao.delete(id) }
+    }
+
+    /** Toggles a bookmark on the current page. */
+    fun toggleBookmark() {
+        val ready = _state.value as? ReaderState.Ready ?: return
+        val start = pageStartChar()
+        viewModelScope.launch {
+            val existing = annotationDao.bookmarkAt(ready.book.id, start)
+            if (existing != null) {
+                annotationDao.delete(existing.id)
+            } else {
+                val chapter = chapterAt(ready, start)
+                val preview = textBetween(ready, start, start + 90)
+                annotationDao.insert(
+                    AnnotationEntity(
+                        bookId = ready.book.id,
+                        kind = AnnotationKind.BOOKMARK.name,
+                        startChar = start,
+                        endChar = start,
+                        selectedText = preview,
+                        chapterIndex = chapter.first,
+                        chapterTitle = chapter.second
+                    )
+                )
+            }
+        }
+    }
+
+    /** Jumps to whatever page contains this offset. */
+    fun goToChar(target: Int) {
+        val ready = _state.value as? ReaderState.Ready ?: return
+        val pages = ready.pages ?: return
+        _pageIndex.value = pageForGlobalChar(pages, ready.content, target)
+        _sheet.value = ReaderSheet.NONE
+        scheduleSave()
+    }
+
+    /** Slices the book's concatenated text by absolute offsets. */
+    private fun textBetween(ready: ReaderState.Ready, start: Int, end: Int): String {
+        val sb = StringBuilder()
+        var cursor = 0
+        for (chapter in ready.content.chapters) {
+            val chapterStart = cursor
+            val chapterEnd = cursor + chapter.text.length
+            if (chapterEnd > start && chapterStart < end) {
+                val from = (start - chapterStart).coerceIn(0, chapter.text.length)
+                val to = (end - chapterStart).coerceIn(0, chapter.text.length)
+                if (from < to) sb.append(chapter.text, from, to)
+            }
+            cursor = chapterEnd
+            if (cursor >= end) break
+        }
+        return sb.toString().trim()
+    }
+
+    private fun chapterAt(ready: ReaderState.Ready, offset: Int): Pair<Int, String?> {
+        var cursor = 0
+        ready.content.chapters.forEachIndexed { index, chapter ->
+            val end = cursor + chapter.text.length
+            if (offset < end) return index to chapter.title
+            cursor = end
+        }
+        val last = ready.content.chapters.lastIndex.coerceAtLeast(0)
+        return last to ready.content.chapters.getOrNull(last)?.title
     }
 
     // --- settings -----------------------------------------------------------

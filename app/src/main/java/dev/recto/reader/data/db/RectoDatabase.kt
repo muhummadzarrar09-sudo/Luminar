@@ -11,9 +11,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     entities = [
         BookEntity::class,
         CollectionEntity::class,
-        BookCollectionCrossRef::class
+        BookCollectionCrossRef::class,
+        AnnotationEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = true
 )
 abstract class RectoDatabase : RoomDatabase() {
@@ -21,6 +22,8 @@ abstract class RectoDatabase : RoomDatabase() {
     abstract fun bookDao(): BookDao
 
     abstract fun collectionDao(): CollectionDao
+
+    abstract fun annotationDao(): AnnotationDao
 
     companion object {
 
@@ -115,6 +118,46 @@ abstract class RectoDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v4 -> v5: highlights, notes and bookmarks.
+         *
+         * Column order, types and index names must match exactly what Room
+         * generates for AnnotationEntity, or schema validation fails at open
+         * time with a confusing "expected/found" dump.
+         */
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `annotations` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `bookId` INTEGER NOT NULL,
+                        `kind` TEXT NOT NULL,
+                        `startChar` INTEGER NOT NULL,
+                        `endChar` INTEGER NOT NULL,
+                        `selectedText` TEXT NOT NULL,
+                        `note` TEXT,
+                        `colour` INTEGER NOT NULL,
+                        `chapterIndex` INTEGER NOT NULL,
+                        `chapterTitle` TEXT,
+                        `createdAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL,
+                        FOREIGN KEY(`bookId`) REFERENCES `books`(`id`)
+                            ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_annotations_bookId` " +
+                        "ON `annotations` (`bookId`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_annotations_bookId_startChar` " +
+                        "ON `annotations` (`bookId`, `startChar`)"
+                )
+            }
+        }
+
         @Volatile
         private var instance: RectoDatabase? = null
 
@@ -125,7 +168,7 @@ abstract class RectoDatabase : RoomDatabase() {
                     RectoDatabase::class.java,
                     "recto.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     // No setForeignKeyConstraintsEnabled call here: that is
                     // not a RoomDatabase.Builder method, it belongs to
                     // SQLiteDatabase. Room does not need it - when any entity

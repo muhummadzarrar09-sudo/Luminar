@@ -1,5 +1,6 @@
 package dev.recto.reader.ui.reader
 
+import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -12,6 +13,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -42,8 +44,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -71,6 +77,9 @@ fun ReaderScreen(
     val chromeVisible by vm.chromeVisible.collectAsStateWithLifecycle()
     val settings by vm.settings.collectAsStateWithLifecycle()
     val sheet by vm.sheet.collectAsStateWithLifecycle()
+    val annotations by vm.annotations.collectAsStateWithLifecycle()
+    val selection by vm.selection.collectAsStateWithLifecycle()
+    val editingNote by vm.editingNote.collectAsStateWithLifecycle()
 
     LaunchedEffect(bookId) { vm.load(bookId) }
 
@@ -116,6 +125,8 @@ fun ReaderScreen(
                 pageIndex = pageIndex,
                 chromeVisible = chromeVisible,
                 settings = settings,
+                annotations = annotations,
+                selection = selection,
                 vm = vm,
                 onBack = {
                     vm.persistNow()
@@ -150,7 +161,47 @@ fun ReaderScreen(
             onDismiss = vm::dismissSheet
         )
 
+        ReaderSheet.NOTEBOOK -> {
+            val context = LocalContext.current
+            NotebookSheet(
+                annotations = annotations,
+                onJump = { vm.goToChar(it.startChar) },
+                onEditNote = vm::editNote,
+                onDelete = vm::deleteAnnotation,
+                onExport = {
+                    val ready = state as? ReaderState.Ready
+                    val body = buildExportText(
+                        bookTitle = ready?.content?.title ?: ready?.book?.title ?: "Book",
+                        author = ready?.content?.author ?: ready?.book?.author,
+                        annotations = annotations
+                    )
+                    context.startActivity(
+                        Intent.createChooser(
+                            Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_TEXT, body)
+                            },
+                            "Export notes"
+                        )
+                    )
+                },
+                onDismiss = vm::dismissSheet
+            )
+        }
+
         ReaderSheet.NONE -> Unit
+    }
+
+    editingNote?.let { note ->
+        NoteEditorDialog(
+            annotation = note,
+            onSave = { vm.saveNote(note.id, it) },
+            onDelete = {
+                vm.deleteAnnotation(note.id)
+                vm.dismissNoteEditor()
+            },
+            onDismiss = vm::dismissNoteEditor
+        )
     }
 }
 
@@ -160,6 +211,8 @@ private fun ReaderContent(
     pageIndex: Int,
     chromeVisible: Boolean,
     settings: ReaderSettings,
+    annotations: List<dev.recto.reader.data.db.AnnotationEntity>,
+    selection: IntRange?,
     vm: ReaderViewModel,
     onBack: () -> Unit
 ) {
@@ -267,6 +320,11 @@ private fun ReaderContent(
                 style = readingStyle,
                 background = settings.theme.background,
                 horizontalPadding = horizontalPadding,
+                annotations = annotations,
+                selection = selection,
+                darkTheme = settings.theme.isDark,
+                onSelectionChange = vm::setSelection,
+                pageStartOf = vm::pageStartOf,
                 onNext = vm::next,
                 onPrevious = vm::previous,
                 onToggleChrome = vm::toggleChrome
@@ -279,6 +337,25 @@ private fun ReaderContent(
         // controls too would make the sliders progressively harder to read the
         // more warmth you applied, which is the opposite of helpful.
         EyeComfortOverlay(warmth = settings.warmth, dim = settings.dim)
+
+        // Selection toolbar. Sits just above the bottom edge so it never
+        // covers the words you are selecting near the middle of the page.
+        if (selection != null) {
+            val clipboard = LocalClipboardManager.current
+            SelectionToolbar(
+                onColour = vm::highlightSelection,
+                onNote = vm::addNoteToSelection,
+                onCopy = {
+                    clipboard.setText(AnnotatedString(vm.selectedText()))
+                    vm.clearSelection()
+                },
+                onDismiss = vm::clearSelection,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(bottom = 28.dp)
+            )
+        }
 
         // Top chrome
         AnimatedVisibility(
@@ -307,8 +384,12 @@ private fun ReaderContent(
                             .padding(horizontal = 8.dp)
                     )
 
+                    TextButton(onClick = vm::toggleBookmark) { Text("Mark") }
+                    TextButton(onClick = { vm.showSheet(ReaderSheet.NOTEBOOK) }) {
+                        Text("Notes")
+                    }
                     TextButton(onClick = { vm.showSheet(ReaderSheet.CONTENTS) }) {
-                        Text("Contents")
+                        Text("TOC")
                     }
                     TextButton(onClick = { vm.showSheet(ReaderSheet.SETTINGS) }) {
                         Text("Aa", style = MaterialTheme.typography.titleLarge)
@@ -397,17 +478,35 @@ private fun PageSurface(
     style: TextStyle,
     background: androidx.compose.ui.graphics.Color,
     horizontalPadding: androidx.compose.ui.unit.Dp,
+    annotations: List<dev.recto.reader.data.db.AnnotationEntity>,
+    selection: IntRange?,
+    darkTheme: Boolean,
+    onSelectionChange: (IntRange?) -> Unit,
+    /** Absolute book offset of a page's first character. */
+    pageStartOf: (Int) -> Int,
     onNext: () -> Unit,
     onPrevious: () -> Unit,
     onToggleChrome: () -> Unit
 ) {
     var dragTotal by remember { mutableFloatStateOf(0f) }
 
+    // Layout of the page currently on screen, needed to turn a touch point
+    // into a character offset. Set by Text's onTextLayout.
+    var layout by remember(pageIndex) { mutableStateOf<TextLayoutResult?>(null) }
+
+    val selecting = selection != null
+
     Box(
         Modifier
             .fillMaxSize()
-            .pointerInput(pages.size) {
+            .pointerInput(pages.size, selecting) {
                 detectTapGestures { offset ->
+                    // A tap while selecting means "done", not "turn the page".
+                    // Turning the page mid-selection would be maddening.
+                    if (selecting) {
+                        onSelectionChange(null)
+                        return@detectTapGestures
+                    }
                     // Kindle's three zones: left third back, right third
                     // forward, centre toggles the chrome.
                     when {
@@ -417,7 +516,8 @@ private fun PageSurface(
                     }
                 }
             }
-            .pointerInput(pages.size) {
+            .pointerInput(pages.size, selecting) {
+                if (selecting) return@pointerInput
                 detectHorizontalDragGestures(
                     onDragStart = { dragTotal = 0f },
                     onDragEnd = {
@@ -461,7 +561,57 @@ private fun PageSurface(
                     )
             ) {
                 if (page != null) {
-                    Text(text = page.text, style = style)
+                    val pageStart = pageStartOf(index)
+
+                    Text(
+                        text = PageText.build(
+                            text = page.text,
+                            pageStart = pageStart,
+                            annotations = annotations,
+                            selection = selection,
+                            darkTheme = darkTheme,
+                            selectionColour = selectionTint(style.color)
+                        ),
+                        style = style,
+                        onTextLayout = { layout = it },
+                        modifier = Modifier
+                            .fillMaxSize()
+                            // Long-press selects a word; dragging afterwards
+                            // extends the selection. Placed on the Text rather
+                            // than the outer Box so offsets map directly onto
+                            // the laid-out text with no coordinate juggling.
+                            .pointerInput(index, pageStart) {
+                                var anchor = -1
+                                detectDragGesturesAfterLongPress(
+                                    onDragStart = { pos ->
+                                        val l = layout ?: return@detectDragGesturesAfterLongPress
+                                        val off = l.getOffsetForPosition(pos)
+                                        val word = PageText.wordBoundsAt(page.text, off)
+                                        if (word != null) {
+                                            anchor = word.first
+                                            onSelectionChange(
+                                                (pageStart + word.first)..(pageStart + word.last + 1)
+                                            )
+                                        }
+                                    },
+                                    onDrag = { change, _ ->
+                                        val l = layout ?: return@detectDragGesturesAfterLongPress
+                                        if (anchor < 0) return@detectDragGesturesAfterLongPress
+                                        val off = l.getOffsetForPosition(change.position)
+                                            .coerceIn(0, page.text.length)
+                                        val from = minOf(anchor, off)
+                                        val to = maxOf(anchor, off)
+                                        if (to > from) {
+                                            onSelectionChange(
+                                                (pageStart + from)..(pageStart + to)
+                                            )
+                                        }
+                                    },
+                                    onDragEnd = { anchor = -1 },
+                                    onDragCancel = { anchor = -1 }
+                                )
+                            }
+                    )
                 }
             }
         }
