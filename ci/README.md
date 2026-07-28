@@ -1,7 +1,12 @@
-# CI — enable it once, then forget about it
+# CI — enabled
 
-`github-build.yml` compiles the debug APK on every push and uploads it as a
-downloadable artifact.
+**Status: live.** The workflow runs at `.github/workflows/build.yml` and
+compiles the debug APK on every push to `arena/019f9f64-luminar`, uploading
+it as a downloadable artifact.
+
+This file is kept as a record of what the workflow does and why. The setup
+steps below are done - they are left here in case the workflow ever needs
+recreating.
 
 **Why you want this:** the code in this repo is written in an environment with
 no JDK and no Android SDK, so nothing is compiled before it reaches you. CI is
@@ -9,14 +14,14 @@ the only thing standing between a typo and a failed build on your laptop. It
 also means you can download a working APK straight from GitHub on your phone,
 without a cable.
 
-**Why it isn't already enabled:** GitHub blocks pushes that create or modify
-files under `.github/workflows/` unless the pushing credential has the
-`workflow` permission. The automation credential used for this repo doesn't
-have it. You do — so this is a one-time move you make locally.
+**Why it had to be enabled by hand:** GitHub blocks pushes that create or
+modify files under `.github/workflows/` unless the pushing credential has the
+`workflow` permission. The automation credential for this repo doesn't have
+it, so the move was made locally.
 
 ---
 
-## One-time setup
+## One-time setup (already done)
 
 Run these from the repo root: `D:\fun projects out of boredom\Recto`
 
