@@ -25,5 +25,5 @@ val Sepia = Color(0xFFF4ECD8)
 val SepiaInk = Color(0xFF3A2F24)
 
 // Accent - the warm brown of a well-handled book spine
-val Accent = Color(0xFF8C5A3C)
-val AccentLight = Color(0xFFC08A66)
+val Accent = Color(0xFFB35C38)
+val AccentLight = Color(0xFFD08A66)

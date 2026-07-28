@@ -22,6 +22,11 @@ interface BookDao {
     @Query("SELECT * FROM books WHERE contentHash = :hash LIMIT 1")
     suspend fun byContentHash(hash: String): BookEntity?
 
+    @Query(
+        "SELECT * FROM books WHERE matchTitle = :title AND matchAuthor = :author LIMIT 1"
+    )
+    suspend fun byTitleAuthor(title: String, author: String): BookEntity?
+
     /**
      * Most recently opened book, for the "Continue reading" card.
      * Returns null until something has actually been opened.

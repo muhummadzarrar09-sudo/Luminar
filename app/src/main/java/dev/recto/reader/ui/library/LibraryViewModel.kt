@@ -7,8 +7,13 @@ import androidx.lifecycle.viewModelScope
 import dev.recto.reader.data.BookRepository
 import dev.recto.reader.data.ImportResult
 import dev.recto.reader.data.ImportSource
+import dev.recto.reader.data.db.BookCollectionCrossRef
 import dev.recto.reader.data.db.BookEntity
+import dev.recto.reader.data.db.CollectionEntity
+import dev.recto.reader.data.db.CollectionWithCount
 import dev.recto.reader.data.db.RectoDatabase
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -16,21 +21,29 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class LibraryViewModel(app: Application) : AndroidViewModel(app) {
 
-    private val repo = BookRepository(
-        context = app,
-        dao = RectoDatabase.get(app).bookDao()
-    )
+    private val db = RectoDatabase.get(app)
+    private val repo = BookRepository(context = app, dao = db.bookDao())
+    private val collectionDao = db.collectionDao()
 
-    val books: StateFlow<List<BookEntity>> = repo.observeBooks()
+    /** Null means "All books"; otherwise filter to one collection. */
+    private val _selectedCollection = MutableStateFlow<Long?>(null)
+    val selectedCollection: StateFlow<Long?> = _selectedCollection.asStateFlow()
+
+    val collections: StateFlow<List<CollectionWithCount>> = collectionDao.observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val current: StateFlow<BookEntity?> = repo.observeCurrent()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    val books: StateFlow<List<BookEntity>> = _selectedCollection
+        .flatMapLatest { id ->
+            if (id == null) repo.observeBooks() else collectionDao.observeBooksIn(id)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _importing = MutableStateFlow(false)
     val importing: StateFlow<Boolean> = _importing.asStateFlow()
@@ -38,21 +51,18 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
-    /**
-     * Emitted when a book arrives from outside the app and should be opened
-     * immediately, rather than dropping the user on the library and making
-     * them hunt for what they just tapped.
-     */
+    /** Ids of books picked in multi-select mode. Empty means not selecting. */
+    private val _selection = MutableStateFlow<Set<Long>>(emptySet())
+    val selection: StateFlow<Set<Long>> = _selection.asStateFlow()
+
     private val _openImmediately = MutableSharedFlow<Long>(extraBufferCapacity = 4)
     val openImmediately: SharedFlow<Long> = _openImmediately.asSharedFlow()
+
+    // --- import -------------------------------------------------------------
 
     fun importFromPicker(uris: List<Uri>) =
         import(uris, ImportSource.PICKER, openAfter = false)
 
-    /**
-     * A book handed to us by another app. Copies it into storage (the grant is
-     * transient) and then jumps straight into the reader.
-     */
     fun importFromIntent(uris: List<Uri>) =
         import(uris, ImportSource.EXTERNAL, openAfter = true)
 
@@ -79,8 +89,6 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
                     is ImportResult.Duplicate -> {
                         duplicate++
                         lastTitle = result.title
-                        // Opening a book you already have is still the right
-                        // outcome - the user tapped it expecting to read it.
                         if (openId == null && result.id > 0) openId = result.id
                     }
                     is ImportResult.Unsupported -> unsupported++
@@ -93,10 +101,10 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
 
             _importing.value = false
 
-            // Opening one book straight away is its own feedback; a snackbar
-            // over the first page would just be noise.
-            val single = uris.size == 1 && openAfter && openId != null
-            if (!single) {
+            // Opening a single book is its own feedback - except when it was a
+            // duplicate, where saying so explains why no new cover appeared.
+            val silent = uris.size == 1 && openAfter && openId != null && duplicate == 0
+            if (!silent) {
                 _message.value =
                     summarise(added, duplicate, unsupported, failed, lastTitle, firstError)
             }
@@ -119,8 +127,11 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         added > 1 && duplicate + unsupported + failed == 0 ->
             "Added $added books"
 
-        added == 0 && duplicate > 0 && unsupported + failed == 0 ->
-            if (duplicate == 1) "Already in your library" else "$duplicate already in your library"
+        added == 0 && duplicate == 1 && unsupported + failed == 0 ->
+            "Already in your library - opening it"
+
+        added == 0 && duplicate > 1 && unsupported + failed == 0 ->
+            "$duplicate already in your library"
 
         added == 0 && unsupported > 0 && failed == 0 ->
             if (unsupported == 1) "That file type is not supported yet"
@@ -137,12 +148,108 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         }.joinToString(", ")
     }
 
-    fun open(book: BookEntity) {
-        viewModelScope.launch { repo.touch(book.id) }
+    // --- selection ----------------------------------------------------------
+
+    fun toggleSelection(id: Long) {
+        _selection.value = _selection.value.let {
+            if (id in it) it - id else it + id
+        }
+    }
+
+    fun clearSelection() {
+        _selection.value = emptySet()
+    }
+
+    fun selectAll() {
+        _selection.value = books.value.map { it.id }.toSet()
+    }
+
+    // --- delete -------------------------------------------------------------
+
+    fun deleteSelected() {
+        val ids = _selection.value
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            val toDelete = books.value.filter { it.id in ids }
+            toDelete.forEach { repo.delete(it) }
+            _selection.value = emptySet()
+            _message.value =
+                if (toDelete.size == 1) "Removed ${toDelete.first().title}"
+                else "Removed ${toDelete.size} books"
+        }
     }
 
     fun delete(book: BookEntity) {
-        viewModelScope.launch { repo.delete(book) }
+        viewModelScope.launch {
+            repo.delete(book)
+            _message.value = "Removed ${book.title}"
+        }
+    }
+
+    // --- collections --------------------------------------------------------
+
+    fun selectCollection(id: Long?) {
+        _selectedCollection.value = id
+        _selection.value = emptySet()
+    }
+
+    fun createCollectionWithSelection(name: String) {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return
+        val ids = _selection.value
+        viewModelScope.launch {
+            val existing = collectionDao.byName(trimmed)
+            val collectionId = existing?.id
+                ?: collectionDao.insert(CollectionEntity(name = trimmed))
+                    .takeIf { it != -1L }
+                ?: collectionDao.byName(trimmed)?.id
+                ?: return@launch
+
+            ids.forEach { bookId ->
+                collectionDao.addBook(BookCollectionCrossRef(bookId, collectionId))
+            }
+            _selection.value = emptySet()
+            _message.value =
+                if (ids.size == 1) "Added to $trimmed" else "Added ${ids.size} books to $trimmed"
+        }
+    }
+
+    fun addSelectionTo(collectionId: Long, collectionName: String) {
+        val ids = _selection.value
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            ids.forEach { collectionDao.addBook(BookCollectionCrossRef(it, collectionId)) }
+            _selection.value = emptySet()
+            _message.value =
+                if (ids.size == 1) "Added to $collectionName"
+                else "Added ${ids.size} books to $collectionName"
+        }
+    }
+
+    fun removeSelectionFromCurrentCollection() {
+        val collectionId = _selectedCollection.value ?: return
+        val ids = _selection.value
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            ids.forEach { collectionDao.removeBook(it, collectionId) }
+            _selection.value = emptySet()
+            _message.value = "Removed from shelf"
+        }
+    }
+
+    fun deleteCollection(id: Long) {
+        viewModelScope.launch {
+            collectionDao.delete(id)
+            if (_selectedCollection.value == id) _selectedCollection.value = null
+            // The books themselves are untouched; only the shelf goes away.
+            _message.value = "Shelf deleted"
+        }
+    }
+
+    // --- misc ---------------------------------------------------------------
+
+    fun open(book: BookEntity) {
+        viewModelScope.launch { repo.touch(book.id) }
     }
 
     fun clearMessage() {

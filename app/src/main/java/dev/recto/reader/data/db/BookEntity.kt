@@ -24,6 +24,7 @@ import androidx.room.PrimaryKey
     indices = [
         Index(value = ["sourceUri"], unique = true),
         Index(value = ["contentHash"]),
+        Index(value = ["matchTitle", "matchAuthor"]),
         Index(value = ["lastOpenedAt"]),
         Index(value = ["addedAt"])
     ]
@@ -67,5 +68,14 @@ data class BookEntity(
      * the same book shared twice looks like two unrelated files. Content
      * identity can.
      */
-    val contentHash: String? = null
+    val contentHash: String? = null,
+
+    /**
+     * Normalised title/author used to recognise the same book arriving as a
+     * different file - a re-download, a differently compressed EPUB, or the
+     * same text from another source. Lower-cased with punctuation stripped,
+     * so "The Hobbit" and "the hobbit!" match.
+     */
+    val matchTitle: String? = null,
+    val matchAuthor: String? = null
 )

@@ -1,10 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    The Recto mark: an open book reduced to two leaves, with the right-hand
-    page - the recto - picked out in the accent colour.
+    The Recto mark.
+
+    An open book seen straight on, reduced to two leaves meeting at a dark
+    spine. The right-hand page - the recto, the one the app is named after -
+    carries the accent colour and is the focal point. The left leaf is muted,
+    so the eye lands on the right.
+
+    Drawn as a vector rather than exported from the AI concept image so it
+    stays crisp at every density, themes cleanly as a monochrome icon, and
+    costs a couple of KB instead of a set of PNGs.
 
     Adaptive icon foregrounds are 108x108dp with the outer 18dp on each side
-    reserved for masking, so all artwork stays inside the central 72x72dp.
+    reserved for masking, so everything stays inside the central 72x72dp
+    safe zone (18..90).
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
@@ -12,19 +21,19 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- verso: the left-hand leaf -->
+    <!-- verso: left leaf, muted. Top edge angles down toward the spine. -->
     <path
-        android:fillColor="#6B615A"
-        android:pathData="M25,32 L52,36 L52,78 L25,74 Z" />
+        android:fillColor="#C9C2B4"
+        android:pathData="M26,32.5 L52.4,39.2 L52.4,77.5 L26,77.5 Z" />
 
-    <!-- recto: the right-hand leaf, the one we are named for -->
+    <!-- recto: right leaf, the accent. Mirrors the verso. -->
     <path
-        android:fillColor="#8C5A3C"
-        android:pathData="M56,36 L83,32 L83,74 L56,78 Z" />
+        android:fillColor="#B35C38"
+        android:pathData="M82,32.5 L55.6,39.2 L55.6,77.5 L82,77.5 Z" />
 
-    <!-- the spine -->
+    <!-- spine -->
     <path
-        android:fillColor="#3A2F24"
-        android:pathData="M52.5,35 L55.5,35 L55.5,79 L52.5,79 Z" />
+        android:fillColor="#3A322B"
+        android:pathData="M52.4,38.6 L55.6,38.6 L55.6,77.5 L52.4,77.5 Z" />
 
 </vector>

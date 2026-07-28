@@ -116,35 +116,28 @@ class BookRepository(
                 return@withContext ImportResult.Unsupported(displayName ?: "this file")
             }
 
-            // Exact-URI duplicate check. Picker URIs are stable, so this
-            // catches re-picking the same file.
+            // 1. Same URI: catches re-picking the same file from the picker.
             dao.bySourceUri(uri.toString())?.let {
                 return@withContext ImportResult.Duplicate(it.id, it.title)
             }
 
-            // Copy when we cannot hold a durable permission.
-            val mustCopy = !persisted
-            var localPath: String? = null
-            var contentHash: String? = null
+            // 2. Same bytes. Hash BEFORE deciding to copy, and hash every
+            //    import regardless of source.
+            //
+            //    This is the bug that let the same book in twice: the hash
+            //    used to be computed only for copied files, so a book added
+            //    from the picker had no hash at all, and the WhatsApp copy of
+            //    it had nothing to match against.
+            val contentHash = hashOf { context.contentResolver.openInputStream(uri) }
 
-            if (mustCopy) {
-                val copied = copyIntoStorage(uri, displayName)
-                    ?: return@withContext ImportResult.Failed(
-                        "Could not read that file. Try saving it to your phone first."
-                    )
-                localPath = copied.absolutePath
-                contentHash = hashOf(copied)
-
-                // Share-sheet URIs are ephemeral, so the URI itself is useless
-                // for dedupe - the same book shared twice looks like two
-                // different files. Compare content instead.
-                val existing = contentHash?.let { dao.byContentHash(it) }
-                if (existing != null) {
-                    runCatching { copied.delete() }
-                    return@withContext ImportResult.Duplicate(existing.id, existing.title)
+            contentHash?.let { hash ->
+                dao.byContentHash(hash)?.let {
+                    return@withContext ImportResult.Duplicate(it.id, it.title)
                 }
             }
 
+            // Read metadata now - we need it for the title anyway, and for the
+            // third duplicate check below.
             val fallbackTitle = (displayName ?: "Untitled")
                 .substringBeforeLast('.')
                 .replace('_', ' ')
@@ -154,18 +147,39 @@ class BookRepository(
 
             var title = fallbackTitle
             var author: String? = null
-            var coverPath: String? = null
+            var coverBytes: ByteArray? = null
 
             if (format == BookFormat.EPUB) {
                 val meta = EpubMetadataReader.read {
-                    localPath?.let { File(it).inputStream() }
-                        ?: context.contentResolver.openInputStream(uri)
+                    context.contentResolver.openInputStream(uri)
                         ?: error("Cannot open file")
                 }
                 meta.title?.let { title = it }
                 author = meta.author
-                coverPath = meta.coverBytes?.let { saveCover(it) }
+                coverBytes = meta.coverBytes
             }
+
+            // 3. Same title and author. Catches genuinely different files of
+            //    the same book - a re-download, a differently compressed EPUB,
+            //    or the same text from another source. Only trusted when the
+            //    metadata came from inside the EPUB, because filename-derived
+            //    titles are far too coarse to match on.
+            if (format == BookFormat.EPUB && author != null) {
+                dao.byTitleAuthor(normaliseForMatch(title), normaliseForMatch(author))
+                    ?.let { return@withContext ImportResult.Duplicate(it.id, it.title) }
+            }
+
+            // Only now, once we know it is genuinely new, spend the disk.
+            var localPath: String? = null
+            if (!persisted) {
+                val copied = copyIntoStorage(uri, displayName)
+                    ?: return@withContext ImportResult.Failed(
+                        "Could not read that file. Try saving it to your phone first."
+                    )
+                localPath = copied.absolutePath
+            }
+
+            val coverPath = coverBytes?.let { saveCover(it) }
 
             val id = dao.insert(
                 BookEntity(
@@ -177,9 +191,15 @@ class BookRepository(
                     sourceUri = localPath?.let { "file://$it" } ?: uri.toString(),
                     format = format.name,
                     coverPath = coverPath,
-                    sizeBytes = if (sizeBytes > 0) sizeBytes else (localPath?.let { File(it).length() } ?: 0),
+                    sizeBytes = if (sizeBytes > 0) {
+                        sizeBytes
+                    } else {
+                        localPath?.let { File(it).length() } ?: 0
+                    },
                     localPath = localPath,
-                    contentHash = contentHash
+                    contentHash = contentHash,
+                    matchTitle = normaliseForMatch(title),
+                    matchAuthor = author?.let { normaliseForMatch(it) }
                 )
             )
 
@@ -193,6 +213,15 @@ class BookRepository(
             ImportResult.Failed(e.message ?: e::class.java.simpleName)
         }
     }
+
+    /**
+     * Lower-cased, punctuation-stripped form used for title/author matching.
+     * "The Hobbit" and "the hobbit!" should not be two books.
+     */
+    private fun normaliseForMatch(value: String): String =
+        value.lowercase()
+            .replace(Regex("[^a-z0-9]+"), " ")
+            .trim()
 
     /**
      * Streams the document into app-private storage. Streamed, not read into
@@ -219,23 +248,30 @@ class BookRepository(
     }.getOrNull()
 
     /**
-     * SHA-256 of the first 1 MB plus the file length. Full-file hashing on a
-     * large book is slow for no benefit; this is more than enough to spot the
-     * same file arriving twice.
+     * SHA-256 of the first 1 MB of content plus the total byte count.
+     *
+     * Works from any stream, so it can be computed before we decide whether
+     * to copy the file. Hashing a whole 200 MB book would be slow for no real
+     * gain; the leading megabyte plus the exact length is more than enough to
+     * recognise the same file arriving twice.
      */
-    private fun hashOf(file: File): String? = runCatching {
+    private fun hashOf(open: () -> java.io.InputStream?): String? = runCatching {
         val digest = MessageDigest.getInstance("SHA-256")
-        file.inputStream().use { input ->
+        var total = 0L
+        open()?.use { input ->
             val buffer = ByteArray(64 * 1024)
-            var total = 0
-            while (total < 1024 * 1024) {
+            while (true) {
                 val read = input.read(buffer)
                 if (read <= 0) break
-                digest.update(buffer, 0, read)
+                if (total < 1024 * 1024) {
+                    val take = minOf(read.toLong(), 1024 * 1024 - total).toInt()
+                    digest.update(buffer, 0, take)
+                }
                 total += read
             }
-        }
-        digest.update(file.length().toString().toByteArray())
+        } ?: return null
+        if (total == 0L) return null
+        digest.update(total.toString().toByteArray())
         digest.digest().joinToString("") { "%02x".format(it) }
     }.getOrNull()
 
