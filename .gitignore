@@ -45,5 +45,11 @@ Thumbs.db
 /sample-books/
 /test-corpus/
 
-# Machine-specific script output
-scripts/doctor-report.txt
+# Machine-specific script output. No leading slash, so it matches wherever
+# the script is run from - the doctor writes the report next to itself.
+doctor-report.txt
+
+# Windows Explorer folder settings. Created silently when you customise a
+# folder's view or icon; there is no reason for it to be in a git repo.
+desktop.ini
+Desktop.ini
