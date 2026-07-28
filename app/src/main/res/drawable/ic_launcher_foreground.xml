@@ -2,18 +2,21 @@
 <!--
     The Recto mark.
 
-    An open book seen straight on, reduced to two leaves meeting at a dark
-    spine. The right-hand page - the recto, the one the app is named after -
-    carries the accent colour and is the focal point. The left leaf is muted,
-    so the eye lands on the right.
+    A solid geometric R whose counter - the enclosed space inside the bowl -
+    is a page with a dog-eared top-right corner. The letter and the page are
+    the same shape: you cannot draw the R without drawing the page.
 
-    Drawn as a vector rather than exported from the AI concept image so it
-    stays crisp at every density, themes cleanly as a monochrome icon, and
-    costs a couple of KB instead of a set of PNGs.
+    That is the whole idea. "Recto" is the right-hand page of an open book,
+    so the mark is the letter R with a page turning inside it, made entirely
+    of negative space. Nothing decorative, nothing that has to be explained.
 
-    Adaptive icon foregrounds are 108x108dp with the outer 18dp on each side
-    reserved for masking, so everything stays inside the central 72x72dp
-    safe zone (18..90).
+    Drawn by hand as vector paths rather than exported from an image, so it
+    is a couple of KB, stays sharp at every density, and the geometry can be
+    verified rather than eyeballed.
+
+    Adaptive icon foregrounds are 108x108dp with the outer 18dp reserved for
+    masking. Everything here sits inside x 31..78, y 24..84 - comfortably
+    within the 18..90 safe zone.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
@@ -21,19 +24,43 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- verso: left leaf, muted. Top edge angles down toward the spine. -->
-    <path
-        android:fillColor="#C9C2B4"
-        android:pathData="M26,32.5 L52.4,39.2 L52.4,77.5 L26,77.5 Z" />
+    <!--
+        The R itself, with the counter cut out by the even-odd fill rule.
+        The second subpath (the page) winds inside the first, so it renders
+        as a hole rather than an overlapping shape.
 
-    <!-- recto: right leaf, the accent. Mirrors the verso. -->
+        Page corner: the outline steps in at (58,35) -> (64,41) instead of
+        turning a square corner, which is the dog-ear.
+    -->
     <path
+        android:fillType="evenOdd"
         android:fillColor="#B35C38"
-        android:pathData="M82,32.5 L55.6,39.2 L55.6,77.5 L82,77.5 Z" />
+        android:pathData="M31,24
+                          L63,24
+                          C69.5,24 74.5,26.5 77,32
+                          C78.6,35.5 78.6,44.5 77,48
+                          C75,52.6 71,55.2 65.5,56
+                          L78,84
+                          L63,84
+                          L51.2,58
+                          L44,58
+                          L44,84
+                          L31,84
+                          Z
+                          M44,35
+                          L58,35
+                          L64,41
+                          L64,47
+                          C64,47 58,47.6 44,47.6
+                          Z" />
 
-    <!-- spine -->
+    <!--
+        The fold. A small triangle in a darker tone, so the dog-ear reads as
+        a page lifting rather than a nicked corner. This is the only place in
+        the mark with a second colour.
+    -->
     <path
-        android:fillColor="#3A322B"
-        android:pathData="M52.4,38.6 L55.6,38.6 L55.6,77.5 L52.4,77.5 Z" />
+        android:fillColor="#7A3D24"
+        android:pathData="M58,35 L64,41 L58,41 Z" />
 
 </vector>

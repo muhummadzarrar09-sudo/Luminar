@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
@@ -20,7 +21,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -51,6 +51,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -58,6 +59,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import dev.recto.reader.R
 import dev.recto.reader.data.BookFormat
 import dev.recto.reader.data.db.BookEntity
 
@@ -525,23 +527,14 @@ private fun EmptyLibrary(onPick: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Row {
-            Box(
-                Modifier
-                    .height(76.dp)
-                    .aspectRatio(0.72f)
-                    .clip(RoundedCornerShape(topStart = 5.dp, bottomStart = 5.dp))
-                    .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f))
-            )
-            Spacer(Modifier.width(4.dp))
-            Box(
-                Modifier
-                    .height(76.dp)
-                    .aspectRatio(0.72f)
-                    .clip(RoundedCornerShape(topEnd = 5.dp, bottomEnd = 5.dp))
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
-            )
-        }
+        // The app mark itself, rather than a lookalike drawn in Compose.
+        // One source of truth means the empty state can never drift away
+        // from the launcher icon.
+        Image(
+            painter = painterResource(R.drawable.ic_launcher_foreground),
+            contentDescription = null,
+            modifier = Modifier.size(132.dp)
+        )
 
         Spacer(Modifier.height(28.dp))
 
