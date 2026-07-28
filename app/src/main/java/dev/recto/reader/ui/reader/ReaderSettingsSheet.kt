@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -316,8 +318,8 @@ fun TableOfContentsSheet(
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
                 )
             } else {
-                androidx.compose.foundation.lazy.LazyColumn {
-                    androidx.compose.foundation.lazy.items(
+                LazyColumn {
+                    items(
                         items = entries,
                         key = { it.chapterIndex }
                     ) { entry ->
