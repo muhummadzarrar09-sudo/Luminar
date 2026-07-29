@@ -55,6 +55,7 @@ import dev.recto.reader.data.db.AnnotationKind
 @Composable
 fun SelectionToolbar(
     onColour: (Int) -> Unit,
+    onDefine: () -> Unit,
     onNote: () -> Unit,
     onCopy: () -> Unit,
     onDismiss: () -> Unit,
@@ -89,6 +90,7 @@ fun SelectionToolbar(
                     .background(MaterialTheme.colorScheme.outlineVariant)
             )
 
+            TextButton(onClick = onDefine) { Text("Define") }
             TextButton(onClick = onNote) { Text("Note") }
             TextButton(onClick = onCopy) { Text("Copy") }
             TextButton(onClick = onDismiss) { Text("Cancel") }

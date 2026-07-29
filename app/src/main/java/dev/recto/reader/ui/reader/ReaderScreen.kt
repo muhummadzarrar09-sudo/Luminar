@@ -29,6 +29,8 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -54,6 +56,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -80,6 +83,11 @@ fun ReaderScreen(
     val annotations by vm.annotations.collectAsStateWithLifecycle()
     val selection by vm.selection.collectAsStateWithLifecycle()
     val editingNote by vm.editingNote.collectAsStateWithLifecycle()
+    val lookupWord by vm.lookupWord.collectAsStateWithLifecycle()
+    val lookupContext by vm.lookupContext.collectAsStateWithLifecycle()
+    val dictionary by vm.dictionary.collectAsStateWithLifecycle()
+    val wikipedia by vm.wikipedia.collectAsStateWithLifecycle()
+    val wordSaved by vm.wordSaved.collectAsStateWithLifecycle()
 
     LaunchedEffect(bookId) { vm.load(bookId) }
 
@@ -189,7 +197,37 @@ fun ReaderScreen(
             )
         }
 
+        ReaderSheet.VOCABULARY -> {
+            val vocabulary by vm.vocabulary.collectAsStateWithLifecycle()
+            val dueCount by vm.dueCount.collectAsStateWithLifecycle()
+            val reviewQueue by vm.reviewQueue.collectAsStateWithLifecycle()
+            VocabularySheet(
+                words = vocabulary,
+                dueCount = dueCount,
+                reviewQueue = reviewQueue,
+                onStartReview = vm::startReview,
+                onAnswer = vm::answerCard,
+                onDelete = vm::deleteVocabulary,
+                onDismiss = vm::dismissSheet
+            )
+        }
+
         ReaderSheet.NONE -> Unit
+    }
+
+    lookupWord?.let { word ->
+        val context = LocalContext.current
+        LookupSheet(
+            word = word,
+            contextSentence = lookupContext,
+            dictionary = dictionary,
+            wikipedia = wikipedia,
+            isSaved = wordSaved,
+            onSave = vm::saveCurrentWord,
+            onPlayAudio = { url -> playPronunciation(context, url) },
+            onRetry = vm::retryLookup,
+            onDismiss = vm::dismissLookup
+        )
     }
 
     editingNote?.let { note ->
@@ -324,6 +362,7 @@ private fun ReaderContent(
                 selection = selection,
                 darkTheme = settings.theme.isDark,
                 onSelectionChange = vm::setSelection,
+                onLookUp = { vm.lookUp(it) },
                 pageStartOf = vm::pageStartOf,
                 onNext = vm::next,
                 onPrevious = vm::previous,
@@ -344,6 +383,7 @@ private fun ReaderContent(
             val clipboard = LocalClipboardManager.current
             SelectionToolbar(
                 onColour = vm::highlightSelection,
+                onDefine = vm::lookUpSelection,
                 onNote = vm::addNoteToSelection,
                 onCopy = {
                     clipboard.setText(AnnotatedString(vm.selectedText()))
@@ -365,34 +405,91 @@ private fun ReaderContent(
             modifier = Modifier.align(Alignment.TopCenter)
         ) {
             Surface(tonalElevation = 3.dp, shadowElevation = 4.dp) {
+                var menuOpen by remember { mutableStateOf(false) }
+                val bookmarked = remember(annotations, pageIndex) {
+                    vm.isCurrentPageBookmarked()
+                }
+
+                // Back, title, Aa, overflow. Aa deliberately stays on the bar:
+                // the test for the menu is whether you touch it mid-chapter,
+                // and text size and theme are constant while contents and the
+                // notebook are occasional. Everything else moves behind the
+                // dots so the title finally gets the room to be readable.
                 Row(
                     Modifier
                         .fillMaxWidth()
                         .statusBarsPadding()
-                        .padding(horizontal = 4.dp, vertical = 4.dp),
+                        .padding(start = 4.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     TextButton(onClick = onBack) { Text("Back") }
 
-                    Text(
-                        text = state.content.title ?: state.book.title,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        modifier = Modifier
+                    Column(
+                        Modifier
                             .weight(1f)
                             .padding(horizontal = 8.dp)
-                    )
+                    ) {
+                        Text(
+                            text = state.content.title ?: state.book.title,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        val chapter = state.content.chapters
+                            .getOrNull(vm.currentChapterIndex())?.title
+                        if (!chapter.isNullOrBlank()) {
+                            Text(
+                                text = chapter,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
 
-                    TextButton(onClick = vm::toggleBookmark) { Text("Mark") }
-                    TextButton(onClick = { vm.showSheet(ReaderSheet.NOTEBOOK) }) {
-                        Text("Notes")
-                    }
-                    TextButton(onClick = { vm.showSheet(ReaderSheet.CONTENTS) }) {
-                        Text("TOC")
-                    }
                     TextButton(onClick = { vm.showSheet(ReaderSheet.SETTINGS) }) {
                         Text("Aa", style = MaterialTheme.typography.titleLarge)
+                    }
+
+                    Box {
+                        TextButton(onClick = { menuOpen = true }) {
+                            Text("\u22EE", style = MaterialTheme.typography.titleLarge)
+                        }
+                        DropdownMenu(
+                            expanded = menuOpen,
+                            onDismissRequest = { menuOpen = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text(if (bookmarked) "Remove bookmark" else "Bookmark this page") },
+                                onClick = {
+                                    menuOpen = false
+                                    vm.toggleBookmark()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Contents") },
+                                onClick = {
+                                    menuOpen = false
+                                    vm.showSheet(ReaderSheet.CONTENTS)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Notebook") },
+                                onClick = {
+                                    menuOpen = false
+                                    vm.showSheet(ReaderSheet.NOTEBOOK)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Vocabulary") },
+                                onClick = {
+                                    menuOpen = false
+                                    vm.showSheet(ReaderSheet.VOCABULARY)
+                                }
+                            )
+                        }
                     }
                 }
             }
@@ -482,6 +579,7 @@ private fun PageSurface(
     selection: IntRange?,
     darkTheme: Boolean,
     onSelectionChange: (IntRange?) -> Unit,
+    onLookUp: (String) -> Unit,
     /** Absolute book offset of a page's first character. */
     pageStartOf: (Int) -> Int,
     onNext: () -> Unit,
@@ -582,6 +680,9 @@ private fun PageSurface(
                             // the laid-out text with no coordinate juggling.
                             .pointerInput(index, pageStart) {
                                 var anchor = -1
+                                var dragged = false
+                                var pressedWord: String? = null
+
                                 detectDragGesturesAfterLongPress(
                                     onDragStart = { pos ->
                                         val l = layout ?: return@detectDragGesturesAfterLongPress
@@ -589,6 +690,11 @@ private fun PageSurface(
                                         val word = PageText.wordBoundsAt(page.text, off)
                                         if (word != null) {
                                             anchor = word.first
+                                            dragged = false
+                                            pressedWord = page.text.substring(
+                                                word.first,
+                                                (word.last + 1).coerceAtMost(page.text.length)
+                                            )
                                             onSelectionChange(
                                                 (pageStart + word.first)..(pageStart + word.last + 1)
                                             )
@@ -597,6 +703,7 @@ private fun PageSurface(
                                     onDrag = { change, _ ->
                                         val l = layout ?: return@detectDragGesturesAfterLongPress
                                         if (anchor < 0) return@detectDragGesturesAfterLongPress
+                                        dragged = true
                                         val off = l.getOffsetForPosition(change.position)
                                             .coerceIn(0, page.text.length)
                                         val from = minOf(anchor, off)
@@ -607,8 +714,26 @@ private fun PageSurface(
                                             )
                                         }
                                     },
-                                    onDragEnd = { anchor = -1 },
-                                    onDragCancel = { anchor = -1 }
+                                    onDragEnd = {
+                                        // Long-press and release on a single
+                                        // word means "what does this mean?".
+                                        // Long-press and DRAG means "select a
+                                        // phrase", so no card - the toolbar is
+                                        // what you want there. This is the
+                                        // whole gesture design: no new taps,
+                                        // no conflict with page turns.
+                                        if (!dragged) {
+                                            pressedWord?.let { onLookUp(it) }
+                                        }
+                                        anchor = -1
+                                        dragged = false
+                                        pressedWord = null
+                                    },
+                                    onDragCancel = {
+                                        anchor = -1
+                                        dragged = false
+                                        pressedWord = null
+                                    }
                                 )
                             }
                     )

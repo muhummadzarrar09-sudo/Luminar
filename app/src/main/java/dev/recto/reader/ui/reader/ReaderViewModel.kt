@@ -15,6 +15,11 @@ import dev.recto.reader.data.SettingsRepository
 import dev.recto.reader.data.db.AnnotationDao
 import dev.recto.reader.data.db.AnnotationEntity
 import dev.recto.reader.data.db.AnnotationKind
+import dev.recto.reader.data.db.VocabularyEntity
+import dev.recto.reader.data.lookup.DictionaryEntry
+import dev.recto.reader.data.lookup.LookupRepository
+import dev.recto.reader.data.lookup.LookupState
+import dev.recto.reader.data.lookup.WikipediaSummary
 import dev.recto.reader.data.db.BookEntity
 import dev.recto.reader.data.db.RectoDatabase
 import kotlinx.coroutines.Dispatchers
@@ -43,7 +48,7 @@ sealed interface ReaderState {
 }
 
 /** Which overlay, if any, is showing over the page. */
-enum class ReaderSheet { NONE, SETTINGS, CONTENTS, NOTEBOOK }
+enum class ReaderSheet { NONE, SETTINGS, CONTENTS, NOTEBOOK, VOCABULARY }
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ReaderViewModel(app: Application) : AndroidViewModel(app) {
@@ -52,6 +57,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     private val repo = BookRepository(app, db.bookDao())
     private val settingsRepo = SettingsRepository(app)
     private val annotationDao: AnnotationDao = db.annotationDao()
+    private val lookupRepo = LookupRepository(db.lookupDao())
 
     private val _bookIdFlow = MutableStateFlow(-1L)
 
@@ -164,6 +170,122 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             scheduleSave()
         }
         _sheet.value = ReaderSheet.NONE
+    }
+
+    // --- lookup -------------------------------------------------------------
+
+    /** The word being looked up, or null when the card is closed. */
+    private val _lookupWord = MutableStateFlow<String?>(null)
+    val lookupWord: StateFlow<String?> = _lookupWord.asStateFlow()
+
+    /** Sentence the word appeared in, carried into the vocabulary entry. */
+    private val _lookupContext = MutableStateFlow<String?>(null)
+    val lookupContext: StateFlow<String?> = _lookupContext.asStateFlow()
+
+    private val _dictionary =
+        MutableStateFlow<LookupState<DictionaryEntry>>(LookupState.Idle)
+    val dictionary: StateFlow<LookupState<DictionaryEntry>> = _dictionary.asStateFlow()
+
+    private val _wikipedia =
+        MutableStateFlow<LookupState<WikipediaSummary>>(LookupState.Idle)
+    val wikipedia: StateFlow<LookupState<WikipediaSummary>> = _wikipedia.asStateFlow()
+
+    /** Vocabulary list, for the flashcard sheet. */
+    val vocabulary: StateFlow<List<VocabularyEntity>> = lookupRepo.observeVocabulary()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val dueCount: StateFlow<Int> = lookupRepo.observeDueCount()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
+    private val _wordSaved = MutableStateFlow(false)
+    val wordSaved: StateFlow<Boolean> = _wordSaved.asStateFlow()
+
+    /**
+     * Looks a word up. Dictionary and Wikipedia are fetched concurrently -
+     * they are independent, and doing them in sequence would double the wait
+     * on the slower one.
+     */
+    fun lookUp(word: String, contextSentence: String? = null) {
+        val clean = word.trim().trim('.', ',', ';', ':', '!', '?', '"', '\'', '(', ')')
+        if (clean.isEmpty()) return
+
+        _lookupWord.value = clean
+        _lookupContext.value = contextSentence
+        _dictionary.value = LookupState.Loading
+        _wikipedia.value = LookupState.Loading
+        _wordSaved.value = false
+
+        viewModelScope.launch {
+            _wordSaved.value = lookupRepo.isSaved(clean)
+        }
+        viewModelScope.launch {
+            _dictionary.value = lookupRepo.define(clean)
+        }
+        viewModelScope.launch {
+            _wikipedia.value = lookupRepo.wikipedia(clean)
+        }
+    }
+
+    fun retryLookup() {
+        _lookupWord.value?.let { lookUp(it, _lookupContext.value) }
+    }
+
+    fun dismissLookup() {
+        _lookupWord.value = null
+        _dictionary.value = LookupState.Idle
+        _wikipedia.value = LookupState.Idle
+    }
+
+    /** Looks up whatever is currently selected. */
+    fun lookUpSelection() {
+        val text = selectedText()
+        if (text.isBlank()) return
+        // Only the first word - a dictionary cannot do phrases, and the
+        // Wikipedia tab handles multi-word proper nouns anyway.
+        val first = text.trim().split(Regex("\\s+")).firstOrNull().orEmpty()
+        lookUp(if (text.trim().count { it == ' ' } <= 2) text.trim() else first,
+            contextSentence = sentenceAround(_selection.value?.first ?: 0))
+        _selection.value = null
+    }
+
+    fun saveCurrentWord() {
+        val word = _lookupWord.value ?: return
+        val entry = (_dictionary.value as? LookupState.Success)?.data ?: return
+        val firstPos = entry.entries.firstOrNull() ?: return
+        val definition = firstPos.senses.firstOrNull()?.definition ?: return
+        val ready = _state.value as? ReaderState.Ready
+
+        viewModelScope.launch {
+            val ok = lookupRepo.saveWord(
+                word = word,
+                definition = definition,
+                partOfSpeech = firstPos.partOfSpeech,
+                phonetic = entry.phonetic,
+                contextSentence = _lookupContext.value,
+                bookId = ready?.book?.id,
+                bookTitle = ready?.content?.title ?: ready?.book?.title
+            )
+            if (ok) _wordSaved.value = true
+        }
+    }
+
+    /**
+     * The sentence containing an offset, for vocabulary context. Context is
+     * most of what makes a word stick, so it is worth storing.
+     */
+    private fun sentenceAround(offset: Int, window: Int = 220): String? {
+        val ready = _state.value as? ReaderState.Ready ?: return null
+        val from = (offset - window).coerceAtLeast(0)
+        val slice = textBetween(ready, from, offset + window)
+        if (slice.isBlank()) return null
+
+        val local = (offset - from).coerceIn(0, slice.length)
+        val start = slice.lastIndexOfAny(charArrayOf('.', '!', '?'), (local - 1).coerceAtLeast(0))
+        val end = slice.indexOfAny(charArrayOf('.', '!', '?'), local)
+        return slice.substring(
+            (start + 1).coerceIn(0, slice.length),
+            (if (end == -1) slice.length else end + 1).coerceIn(0, slice.length)
+        ).trim().ifBlank { null }
     }
 
     // --- annotations --------------------------------------------------------
@@ -318,6 +440,41 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     fun dismissNoteEditor() {
         _editingNote.value = null
+    }
+
+    /** True when the current page already has a bookmark. */
+    fun isCurrentPageBookmarked(): Boolean {
+        val start = pageStartChar()
+        return annotations.value.any {
+            it.kind == AnnotationKind.BOOKMARK.name && it.startChar == start
+        }
+    }
+
+    // --- flashcards ---
+
+    private val _reviewQueue = MutableStateFlow<List<VocabularyEntity>>(emptyList())
+    val reviewQueue: StateFlow<List<VocabularyEntity>> = _reviewQueue.asStateFlow()
+
+    fun startReview() {
+        viewModelScope.launch {
+            _reviewQueue.value = lookupRepo.dueCards()
+        }
+    }
+
+    fun answerCard(card: VocabularyEntity, recall: dev.recto.reader.data.lookup.Recall) {
+        viewModelScope.launch {
+            lookupRepo.review(card, recall)
+            // Drop the answered card; "Again" cards come back next session
+            // rather than immediately, which keeps a review finite.
+            _reviewQueue.value = _reviewQueue.value.filterNot { it.id == card.id }
+        }
+    }
+
+    fun deleteVocabulary(id: Long) {
+        viewModelScope.launch {
+            lookupRepo.deleteWord(id)
+            _reviewQueue.value = _reviewQueue.value.filterNot { it.id == id }
+        }
     }
 
     fun deleteAnnotation(id: Long) {

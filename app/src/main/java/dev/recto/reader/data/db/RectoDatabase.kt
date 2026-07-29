@@ -12,9 +12,11 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         BookEntity::class,
         CollectionEntity::class,
         BookCollectionCrossRef::class,
-        AnnotationEntity::class
+        AnnotationEntity::class,
+        LookupCacheEntity::class,
+        VocabularyEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = true
 )
 abstract class RectoDatabase : RoomDatabase() {
@@ -24,6 +26,8 @@ abstract class RectoDatabase : RoomDatabase() {
     abstract fun collectionDao(): CollectionDao
 
     abstract fun annotationDao(): AnnotationDao
+
+    abstract fun lookupDao(): LookupDao
 
     companion object {
 
@@ -158,6 +162,65 @@ abstract class RectoDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v5 -> v6: dictionary cache and vocabulary with SM-2 scheduling.
+         *
+         * lookup_cache has no foreign key - it is keyed by term, not book, so
+         * a definition looked up in one book is still there in the next.
+         * vocabulary deliberately keeps bookId nullable and unconstrained for
+         * the same reason: deleting the book you met a word in should not
+         * delete the word you were learning.
+         */
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `lookup_cache` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `source` TEXT NOT NULL,
+                        `term` TEXT NOT NULL,
+                        `payload` TEXT NOT NULL,
+                        `fetchedAt` INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_lookup_cache_source_term` " +
+                        "ON `lookup_cache` (`source`, `term`)"
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `vocabulary` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `word` TEXT NOT NULL,
+                        `definition` TEXT NOT NULL,
+                        `partOfSpeech` TEXT,
+                        `phonetic` TEXT,
+                        `contextSentence` TEXT,
+                        `bookId` INTEGER,
+                        `bookTitle` TEXT,
+                        `addedAt` INTEGER NOT NULL,
+                        `easeFactor` REAL NOT NULL,
+                        `intervalDays` INTEGER NOT NULL,
+                        `repetitions` INTEGER NOT NULL,
+                        `dueAt` INTEGER NOT NULL,
+                        `lastReviewedAt` INTEGER,
+                        `timesReviewed` INTEGER NOT NULL,
+                        `timesCorrect` INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_vocabulary_word` " +
+                        "ON `vocabulary` (`word`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_vocabulary_dueAt` " +
+                        "ON `vocabulary` (`dueAt`)"
+                )
+            }
+        }
+
         @Volatile
         private var instance: RectoDatabase? = null
 
@@ -168,7 +231,10 @@ abstract class RectoDatabase : RoomDatabase() {
                     RectoDatabase::class.java,
                     "recto.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                    .addMigrations(
+                        MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4,
+                        MIGRATION_4_5, MIGRATION_5_6
+                    )
                     // No setForeignKeyConstraintsEnabled call here: that is
                     // not a RoomDatabase.Builder method, it belongs to
                     // SQLiteDatabase. Room does not need it - when any entity
