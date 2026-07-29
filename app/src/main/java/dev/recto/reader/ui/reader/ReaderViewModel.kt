@@ -20,6 +20,8 @@ import dev.recto.reader.data.lookup.DictionaryEntry
 import dev.recto.reader.data.lookup.LookupRepository
 import dev.recto.reader.data.lookup.LookupState
 import dev.recto.reader.data.lookup.WikipediaSummary
+import dev.recto.reader.data.search.SearchHit
+import dev.recto.reader.data.search.TextSearch
 import dev.recto.reader.data.db.BookEntity
 import dev.recto.reader.data.db.RectoDatabase
 import kotlinx.coroutines.Dispatchers
@@ -48,7 +50,7 @@ sealed interface ReaderState {
 }
 
 /** Which overlay, if any, is showing over the page. */
-enum class ReaderSheet { NONE, SETTINGS, CONTENTS, NOTEBOOK, VOCABULARY }
+enum class ReaderSheet { NONE, SETTINGS, CONTENTS, NOTEBOOK, VOCABULARY, SEARCH }
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ReaderViewModel(app: Application) : AndroidViewModel(app) {
@@ -170,6 +172,59 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             scheduleSave()
         }
         _sheet.value = ReaderSheet.NONE
+    }
+
+    // --- in-book search -----------------------------------------------------
+
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+
+    private val _searchHits = MutableStateFlow<List<SearchHit>>(emptyList())
+    val searchHits: StateFlow<List<SearchHit>> = _searchHits.asStateFlow()
+
+    private val _searching = MutableStateFlow(false)
+    val searching: StateFlow<Boolean> = _searching.asStateFlow()
+
+    private var searchJob: Job? = null
+
+    /**
+     * Searches the open book. The text is already parsed and in memory, so
+     * this is a scan of a few hundred kilobytes - fast enough to run as you
+     * type, with a short debounce to avoid re-scanning on every keystroke.
+     */
+    fun search(query: String) {
+        _searchQuery.value = query
+        searchJob?.cancel()
+
+        if (query.trim().length < 2) {
+            _searchHits.value = emptyList()
+            _searching.value = false
+            return
+        }
+
+        val ready = _state.value as? ReaderState.Ready ?: return
+        _searching.value = true
+
+        searchJob = viewModelScope.launch {
+            delay(180)
+            val hits = withContext(Dispatchers.Default) {
+                TextSearch.searchChapters(
+                    chapters = ready.content.chapters,
+                    query = query,
+                    bookId = ready.book.id,
+                    bookTitle = ready.content.title ?: ready.book.title
+                )
+            }
+            _searchHits.value = hits
+            _searching.value = false
+        }
+    }
+
+    fun clearSearch() {
+        searchJob?.cancel()
+        _searchQuery.value = ""
+        _searchHits.value = emptyList()
+        _searching.value = false
     }
 
     // --- lookup -------------------------------------------------------------

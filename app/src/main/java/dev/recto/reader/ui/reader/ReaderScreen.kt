@@ -72,6 +72,9 @@ private val PageVerticalPadding = 20.dp
 @Composable
 fun ReaderScreen(
     bookId: Long,
+    /** Absolute char offset to land on, from a library search hit. */
+    jumpToChar: Int? = null,
+    onJumpConsumed: () -> Unit = {},
     onBack: () -> Unit,
     vm: ReaderViewModel = viewModel()
 ) {
@@ -90,6 +93,16 @@ fun ReaderScreen(
     val wordSaved by vm.wordSaved.collectAsStateWithLifecycle()
 
     LaunchedEffect(bookId) { vm.load(bookId) }
+
+    // A search hit carries a position. Wait for pagination before jumping -
+    // pages do not exist until the reader has measured itself.
+    val pagesReady = (state as? ReaderState.Ready)?.pages != null
+    LaunchedEffect(jumpToChar, pagesReady) {
+        if (jumpToChar != null && pagesReady) {
+            vm.goToChar(jumpToChar)
+            onJumpConsumed()
+        }
+    }
 
     BackHandler {
         vm.persistNow()
@@ -194,6 +207,23 @@ fun ReaderScreen(
                     )
                 },
                 onDismiss = vm::dismissSheet
+            )
+        }
+
+        ReaderSheet.SEARCH -> {
+            val query by vm.searchQuery.collectAsStateWithLifecycle()
+            val hits by vm.searchHits.collectAsStateWithLifecycle()
+            val searching by vm.searching.collectAsStateWithLifecycle()
+            InBookSearchSheet(
+                query = query,
+                hits = hits,
+                searching = searching,
+                onQueryChange = vm::search,
+                onJump = { vm.goToChar(it.charOffset) },
+                onDismiss = {
+                    vm.clearSearch()
+                    vm.dismissSheet()
+                }
             )
         }
 
@@ -466,6 +496,13 @@ private fun ReaderContent(
                                 onClick = {
                                     menuOpen = false
                                     vm.toggleBookmark()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Search in book") },
+                                onClick = {
+                                    menuOpen = false
+                                    vm.showSheet(ReaderSheet.SEARCH)
                                 }
                             )
                             DropdownMenuItem(

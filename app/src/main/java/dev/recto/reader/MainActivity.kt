@@ -91,6 +91,8 @@ private fun RectoApp(incoming: MutableStateFlow<Intent?>) {
     val libraryVm: LibraryViewModel = viewModel()
 
     var openBookId by rememberSaveable { mutableStateOf<Long?>(null) }
+    /** Character offset to jump to on open, from a library search hit. */
+    var openAtChar by rememberSaveable { mutableStateOf<Int?>(null) }
 
     val pendingIntent by incoming.collectAsState()
 
@@ -113,13 +115,25 @@ private fun RectoApp(incoming: MutableStateFlow<Intent?>) {
     val id = openBookId
     if (id == null) {
         LibraryScreen(
-            onOpenBook = { book -> openBookId = book.id },
+            onOpenBook = { book ->
+                openAtChar = null
+                openBookId = book.id
+            },
+            onOpenBookAt = { book, charOffset ->
+                openAtChar = charOffset
+                openBookId = book.id
+            },
             vm = libraryVm
         )
     } else {
         ReaderScreen(
             bookId = id,
-            onBack = { openBookId = null }
+            jumpToChar = openAtChar,
+            onJumpConsumed = { openAtChar = null },
+            onBack = {
+                openAtChar = null
+                openBookId = null
+            }
         )
     }
 }

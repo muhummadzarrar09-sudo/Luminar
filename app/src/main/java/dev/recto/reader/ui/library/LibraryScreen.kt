@@ -60,12 +60,17 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.recto.reader.R
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items as listItems
+import dev.recto.reader.ui.reader.SearchHitRow
 import dev.recto.reader.data.BookFormat
 import dev.recto.reader.data.db.BookEntity
 
 @Composable
 fun LibraryScreen(
     onOpenBook: (BookEntity) -> Unit,
+    onOpenBookAt: (BookEntity, Int) -> Unit = { b, _ -> onOpenBook(b) },
     vm: LibraryViewModel = viewModel()
 ) {
     val books by vm.books.collectAsStateWithLifecycle()
@@ -74,6 +79,21 @@ fun LibraryScreen(
     val selection by vm.selection.collectAsStateWithLifecycle()
     val collections by vm.collections.collectAsStateWithLifecycle()
     val selectedCollection by vm.selectedCollection.collectAsStateWithLifecycle()
+    val filter by vm.filter.collectAsStateWithLifecycle()
+    val deepSearch by vm.deepSearch.collectAsStateWithLifecycle()
+
+    // Instant title/author filter over what is already on screen.
+    val visibleBooks = remember(books, filter) {
+        val q = filter.trim()
+        if (q.length < 2) {
+            books
+        } else {
+            books.filter {
+                it.title.contains(q, ignoreCase = true) ||
+                    it.author?.contains(q, ignoreCase = true) == true
+            }
+        }
+    }
 
     val snackbars = remember { SnackbarHostState() }
     var confirmDelete by remember { mutableStateOf(false) }
@@ -128,6 +148,22 @@ fun LibraryScreen(
         ) {
             Column(Modifier.fillMaxSize()) {
 
+                if (!selecting) {
+                    LibrarySearchBar(
+                        query = filter,
+                        onQueryChange = vm::setFilter,
+                        onDeepSearch = vm::runDeepSearch,
+                        deepSearch = deepSearch,
+                        onOpenHit = { hit ->
+                            books.firstOrNull { it.id == hit.bookId }?.let { book ->
+                                vm.open(book)
+                                onOpenBookAt(book, hit.charOffset)
+                            }
+                        },
+                        onCancelDeep = vm::cancelDeepSearch
+                    )
+                }
+
                 if (collections.isNotEmpty() && !selecting) {
                     ShelfChips(
                         collections = collections,
@@ -138,6 +174,14 @@ fun LibraryScreen(
                 }
 
                 when {
+                    visibleBooks.isEmpty() && filter.trim().length >= 2 &&
+                        !deepSearch.running && deepSearch.hits.isEmpty() ->
+                        NoLocalMatches(
+                            query = filter,
+                            onDeepSearch = vm::runDeepSearch,
+                            searched = deepSearch.booksSearched > 0
+                        )
+
                     books.isEmpty() && !importing && selectedCollection == null ->
                         EmptyLibrary(onPick = { picker.launch(BookFormat.pickerMimeTypes) })
 
@@ -145,7 +189,7 @@ fun LibraryScreen(
                         EmptyShelf(onBackToAll = { vm.selectCollection(null) })
 
                     else -> BookGrid(
-                        books = books,
+                        books = visibleBooks,
                         selection = selection,
                         selecting = selecting,
                         onOpen = { book ->
@@ -561,5 +605,134 @@ private fun EmptyLibrary(onPick: () -> Unit) {
             text = { Text("Choose files") },
             icon = { Text("+", style = MaterialTheme.typography.titleLarge) }
         )
+    }
+}
+
+/**
+ * Library search: an instant title filter, with full-text search across every
+ * book as an explicit second step.
+ *
+ * Two tiers on purpose. Filtering titles is free and happens as you type.
+ * Reading every book off disk costs seconds, so it only runs when you ask -
+ * that is the "which book was that in?" failsafe, not something to fire on
+ * every keystroke.
+ */
+@Composable
+private fun LibrarySearchBar(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onDeepSearch: () -> Unit,
+    deepSearch: dev.recto.reader.data.search.LibrarySearchProgress,
+    onOpenHit: (dev.recto.reader.data.search.SearchHit) -> Unit,
+    onCancelDeep: () -> Unit
+) {
+    Column(Modifier.fillMaxWidth()) {
+        OutlinedTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            label = { Text("Search your library") },
+            singleLine = true,
+            trailingIcon = {
+                if (query.isNotEmpty()) {
+                    TextButton(onClick = {
+                        onQueryChange("")
+                        onCancelDeep()
+                    }) { Text("Clear") }
+                }
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+        )
+
+        if (query.trim().length >= 2) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = when {
+                        deepSearch.running ->
+                            "Searching inside books " +
+                                "${deepSearch.booksSearched}/${deepSearch.booksTotal}"
+
+                        deepSearch.done && deepSearch.hits.isEmpty() ->
+                            "Nothing inside your books either"
+
+                        deepSearch.hits.isNotEmpty() ->
+                            "${deepSearch.hits.size} matches inside books"
+
+                        else -> "Not the book you meant?"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+
+                if (!deepSearch.running && deepSearch.booksTotal == 0) {
+                    TextButton(onClick = onDeepSearch) { Text("Search inside") }
+                }
+            }
+
+            if (deepSearch.running) {
+                LinearProgressIndicator(
+                    progress = {
+                        if (deepSearch.booksTotal == 0) 0f
+                        else deepSearch.booksSearched.toFloat() / deepSearch.booksTotal
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                        .height(2.dp)
+                )
+            }
+
+            if (deepSearch.hits.isNotEmpty()) {
+                LazyColumn(Modifier.heightIn(max = 260.dp)) {
+                    listItems(
+                        deepSearch.hits,
+                        key = { "${it.bookId}:${it.charOffset}" }
+                    ) { hit ->
+                        SearchHitRow(hit = hit, showBook = true, onClick = { onOpenHit(hit) })
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NoLocalMatches(query: String, onDeepSearch: () -> Unit, searched: Boolean) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(40.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text(
+            text = "No book titled \"$query\"",
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.onBackground,
+            textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = if (searched) {
+                "And no matches inside your books."
+            } else {
+                "Try searching inside your books - it reads every one, so it " +
+                    "takes a few seconds."
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
+        if (!searched) {
+            Spacer(Modifier.height(16.dp))
+            TextButton(onClick = onDeepSearch) { Text("Search inside books") }
+        }
     }
 }

@@ -12,6 +12,8 @@ import dev.recto.reader.data.db.BookEntity
 import dev.recto.reader.data.db.CollectionEntity
 import dev.recto.reader.data.db.CollectionWithCount
 import dev.recto.reader.data.db.RectoDatabase
+import dev.recto.reader.data.search.LibrarySearchProgress
+import dev.recto.reader.data.search.LibrarySearcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -21,8 +23,10 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -44,6 +48,25 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
             if (id == null) repo.observeBooks() else collectionDao.observeBooksIn(id)
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val searcher = LibrarySearcher(repo)
+
+    /**
+     * Title/author filter. Instant, since it is just a predicate over rows
+     * already in memory.
+     */
+    private val _filter = MutableStateFlow("")
+    val filter: StateFlow<String> = _filter.asStateFlow()
+
+    /**
+     * Full-text search across every book, regardless of shelf. This is the
+     * "which book was that in?" failsafe - deliberately separate from the
+     * quick title filter, because it costs seconds rather than milliseconds.
+     */
+    private val _deepSearch = MutableStateFlow(LibrarySearchProgress())
+    val deepSearch: StateFlow<LibrarySearchProgress> = _deepSearch.asStateFlow()
+
+    private var deepSearchJob: Job? = null
 
     private val _importing = MutableStateFlow(false)
     val importing: StateFlow<Boolean> = _importing.asStateFlow()
@@ -146,6 +169,42 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
             if (unsupported > 0) add("$unsupported unsupported")
             if (failed > 0) add("$failed failed")
         }.joinToString(", ")
+    }
+
+    // --- search ---------------------------------------------------------------
+
+    fun setFilter(text: String) {
+        _filter.value = text
+        // Changing the filter invalidates any deep search in flight; its
+        // results were for a different query.
+        if (text.isBlank()) cancelDeepSearch()
+    }
+
+    /**
+     * Searches inside every book in the library, ignoring the shelf filter -
+     * the whole point is to find a book you cannot locate.
+     *
+     * Results stream in per book, so the first hits appear in a few hundred
+     * milliseconds rather than after the entire library has been scanned.
+     */
+    fun runDeepSearch() {
+        val query = _filter.value.trim()
+        if (query.length < 2) return
+
+        deepSearchJob?.cancel()
+        deepSearchJob = viewModelScope.launch {
+            // Always search the full library, not the current shelf.
+            val all = repo.observeBooks().first()
+            searcher.search(all, query).collect { progress ->
+                _deepSearch.value = progress
+            }
+        }
+    }
+
+    fun cancelDeepSearch() {
+        deepSearchJob?.cancel()
+        deepSearchJob = null
+        _deepSearch.value = LibrarySearchProgress()
     }
 
     // --- selection ----------------------------------------------------------
