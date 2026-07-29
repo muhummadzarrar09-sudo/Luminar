@@ -14,6 +14,10 @@ import dev.recto.reader.data.db.CollectionWithCount
 import dev.recto.reader.data.db.RectoDatabase
 import dev.recto.reader.data.search.LibrarySearchProgress
 import dev.recto.reader.data.search.LibrarySearcher
+import dev.recto.reader.data.SettingsRepository
+import dev.recto.reader.data.stats.ReadingStats
+import dev.recto.reader.ui.stats.StatsSnapshot
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -50,6 +54,82 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val searcher = LibrarySearcher(repo)
+    private val sessionDao = db.readingSessionDao()
+    private val settingsRepo = SettingsRepository(app)
+
+    /**
+     * Everything the stats sheet needs, assembled from four independent
+     * flows. Combined here rather than in the UI so the sheet takes a single
+     * immutable snapshot and cannot render half-updated numbers.
+     */
+    val stats: StateFlow<StatsSnapshot> = combine(
+        sessionDao.observeDailyTotals(),
+        sessionDao.observeTotalMillis(),
+        sessionDao.observeTopBooks(),
+        sessionDao.observeSessionCount(),
+        settingsRepo.settings
+    ) { daily, total, top, count, settings ->
+        val byDay = daily.associate { it.dayKey to it.millisRead }
+        val days = byDay.keys
+        val today = ReadingStats.dayKey()
+        StatsSnapshot(
+            todayMillis = byDay[today] ?: 0L,
+            goalMinutes = settings.dailyGoalMinutes,
+            currentStreak = ReadingStats.currentStreak(days, today),
+            longestStreak = ReadingStats.longestStreak(days),
+            totalMillis = total,
+            sessionCount = count,
+            daysWithReading = days,
+            dailyMillis = byDay,
+            topBooks = top
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), StatsSnapshot())
+
+    val settings: StateFlow<dev.recto.reader.data.ReaderSettings> = settingsRepo.settings
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            dev.recto.reader.data.ReaderSettings()
+        )
+
+    fun setDailyGoal(minutes: Int) {
+        viewModelScope.launch { settingsRepo.setDailyGoal(minutes) }
+    }
+
+    /**
+     * Turning reminders on both persists the flag and arms the alarm - a
+     * setting that says "on" while nothing is scheduled would be a lie.
+     */
+    fun setRemindersEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsRepo.setRemindersEnabled(enabled)
+            val current = settingsRepo.settings.first()
+            if (enabled) {
+                dev.recto.reader.notifications.Notifications.ensureChannels(getApplication())
+                dev.recto.reader.notifications.ReminderScheduler.schedule(
+                    getApplication(),
+                    current.reminderHour,
+                    current.reminderMinute
+                )
+            } else {
+                dev.recto.reader.notifications.ReminderScheduler.cancel(getApplication())
+            }
+        }
+    }
+
+    fun setReminderTime(hour: Int, minute: Int) {
+        viewModelScope.launch {
+            settingsRepo.setReminderTime(hour, minute)
+            val current = settingsRepo.settings.first()
+            if (current.remindersEnabled) {
+                dev.recto.reader.notifications.ReminderScheduler.schedule(
+                    getApplication(),
+                    hour,
+                    minute
+                )
+            }
+        }
+    }
 
     /**
      * Title/author filter. Instant, since it is just a predicate over rows

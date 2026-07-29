@@ -8,6 +8,19 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!--
+        Reading reminders. POST_NOTIFICATIONS is requested at runtime on
+        Android 13+, and only when the user actually turns reminders on.
+
+        Deliberately NOT declared: SCHEDULE_EXACT_ALARM or USE_EXACT_ALARM.
+        Exact alarms are denied by default from Android 14 and Play restricts
+        USE_EXACT_ALARM to alarm-clock and calendar apps. A reading nudge that
+        lands at 20:07 instead of 20:00 is fine, so inexact alarms are both
+        correct and permission-free.
+    -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
@@ -103,6 +116,20 @@
             </intent-filter>
 
         </activity>
+
+
+        <receiver
+            android:name=".notifications.ReminderReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".notifications.BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
     </application>
 

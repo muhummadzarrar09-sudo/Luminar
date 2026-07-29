@@ -132,7 +132,25 @@ data class ReaderSettings(
     val useReaderBrightness: Boolean = false,
 
     /** Backlight level when [useReaderBrightness] is on, 0..1. */
-    val brightness: Float = 0.5f
+    val brightness: Float = 0.5f,
+
+    // --- habits ---
+
+    /**
+     * Minutes of reading a day. Zero means no goal, which also disables the
+     * "you have not hit your goal" flavour of the reminder.
+     */
+    val dailyGoalMinutes: Int = 0,
+
+    /**
+     * Off by default. An app that starts notifying before being asked is an
+     * app that gets its notifications muted.
+     */
+    val remindersEnabled: Boolean = false,
+    val reminderHour: Int = 20,
+    val reminderMinute: Int = 0,
+
+    val streakAlertsEnabled: Boolean = true
 ) {
     companion object {
         const val MIN_FONT_SP = 12

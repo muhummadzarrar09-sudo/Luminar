@@ -40,6 +40,11 @@ class SettingsRepository(private val context: Context) {
         val dim = floatPreferencesKey("dim")
         val useReaderBrightness = booleanPreferencesKey("use_reader_brightness")
         val brightness = floatPreferencesKey("brightness")
+        val dailyGoal = intPreferencesKey("daily_goal_minutes")
+        val reminders = booleanPreferencesKey("reminders_enabled")
+        val reminderHour = intPreferencesKey("reminder_hour")
+        val reminderMinute = intPreferencesKey("reminder_minute")
+        val streakAlerts = booleanPreferencesKey("streak_alerts")
     }
 
     val settings: Flow<ReaderSettings> = context.settingsStore.data
@@ -62,7 +67,12 @@ class SettingsRepository(private val context: Context) {
                 warmth = (prefs[Keys.warmth] ?: 0f).coerceIn(0f, 1f),
                 dim = (prefs[Keys.dim] ?: 0f).coerceIn(0f, 1f),
                 useReaderBrightness = prefs[Keys.useReaderBrightness] ?: false,
-                brightness = (prefs[Keys.brightness] ?: 0.5f).coerceIn(0f, 1f)
+                brightness = (prefs[Keys.brightness] ?: 0.5f).coerceIn(0f, 1f),
+                dailyGoalMinutes = (prefs[Keys.dailyGoal] ?: 0).coerceIn(0, 240),
+                remindersEnabled = prefs[Keys.reminders] ?: false,
+                reminderHour = (prefs[Keys.reminderHour] ?: 20).coerceIn(0, 23),
+                reminderMinute = (prefs[Keys.reminderMinute] ?: 0).coerceIn(0, 59),
+                streakAlertsEnabled = prefs[Keys.streakAlerts] ?: true
             )
         }
 
@@ -95,6 +105,19 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setBrightness(value: Float) =
         edit { it[Keys.brightness] = value.coerceIn(0f, 1f) }
+
+    suspend fun setDailyGoal(minutes: Int) =
+        edit { it[Keys.dailyGoal] = minutes.coerceIn(0, 240) }
+
+    suspend fun setRemindersEnabled(value: Boolean) =
+        edit { it[Keys.reminders] = value }
+
+    suspend fun setReminderTime(hour: Int, minute: Int) = edit {
+        it[Keys.reminderHour] = hour.coerceIn(0, 23)
+        it[Keys.reminderMinute] = minute.coerceIn(0, 59)
+    }
+
+    suspend fun setStreakAlerts(value: Boolean) = edit { it[Keys.streakAlerts] = value }
 
     private suspend fun edit(block: (MutablePreferences) -> Unit) {
         context.settingsStore.edit(block)

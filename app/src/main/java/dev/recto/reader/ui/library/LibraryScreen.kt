@@ -64,6 +64,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items as listItems
 import dev.recto.reader.ui.reader.SearchHitRow
+import androidx.compose.ui.platform.LocalContext
 import dev.recto.reader.data.BookFormat
 import dev.recto.reader.data.db.BookEntity
 
@@ -81,6 +82,9 @@ fun LibraryScreen(
     val selectedCollection by vm.selectedCollection.collectAsStateWithLifecycle()
     val filter by vm.filter.collectAsStateWithLifecycle()
     val deepSearch by vm.deepSearch.collectAsStateWithLifecycle()
+    val stats by vm.stats.collectAsStateWithLifecycle()
+    var showStats by remember { mutableStateOf(false) }
+    var showHabits by remember { mutableStateOf(false) }
 
     // Instant title/author filter over what is already on screen.
     val visibleBooks = remember(books, filter) {
@@ -149,6 +153,12 @@ fun LibraryScreen(
             Column(Modifier.fillMaxSize()) {
 
                 if (!selecting) {
+                    StreakStrip(
+                        stats = stats,
+                        onOpenStats = { showStats = true },
+                        onOpenHabits = { showHabits = true }
+                    )
+
                     LibrarySearchBar(
                         query = filter,
                         onQueryChange = vm::setFilter,
@@ -213,6 +223,17 @@ fun LibraryScreen(
                 )
             }
         }
+    }
+
+    if (showStats) {
+        dev.recto.reader.ui.stats.StatsSheet(
+            stats = stats,
+            onDismiss = { showStats = false }
+        )
+    }
+
+    if (showHabits) {
+        HabitsSheet(vm = vm, onDismiss = { showHabits = false })
     }
 
     if (confirmDelete) {
@@ -733,6 +754,177 @@ private fun NoLocalMatches(query: String, onDeepSearch: () -> Unit, searched: Bo
         if (!searched) {
             Spacer(Modifier.height(16.dp))
             TextButton(onClick = onDeepSearch) { Text("Search inside books") }
+        }
+    }
+}
+
+/**
+ * The streak strip: today's reading, the current streak, and a way into the
+ * full stats. Small on purpose - it should reward you, not nag.
+ */
+@Composable
+private fun StreakStrip(
+    stats: dev.recto.reader.ui.stats.StatsSnapshot,
+    onOpenStats: () -> Unit,
+    onOpenHabits: () -> Unit
+) {
+    val todayMinutes = (stats.todayMillis / 60_000).toInt()
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(
+            Modifier
+                .weight(1f)
+                .clickable(onClick = onOpenStats),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (stats.currentStreak > 0) {
+                Text(
+                    text = "${stats.currentStreak}",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = if (stats.currentStreak == 1) "day streak" else "day streak",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.width(12.dp))
+            }
+
+            Text(
+                text = when {
+                    todayMinutes == 0 -> "Nothing read today"
+                    stats.goalMinutes > 0 && todayMinutes >= stats.goalMinutes ->
+                        "$todayMinutes min today - goal met"
+                    stats.goalMinutes > 0 ->
+                        "$todayMinutes of ${stats.goalMinutes} min today"
+                    else -> "$todayMinutes min today"
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        TextButton(onClick = onOpenHabits) { Text("Goals") }
+    }
+}
+
+/**
+ * Daily goal and reminder settings.
+ *
+ * The notification permission is requested here, at the moment the user asks
+ * for reminders - not on first launch. Asking for a permission before the
+ * user wants the thing it enables is how apps get permanently denied.
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun HabitsSheet(vm: LibraryViewModel, onDismiss: () -> Unit) {
+    val sheetState = androidx.compose.material3.rememberModalBottomSheetState(
+        skipPartiallyExpanded = true
+    )
+    val settings by vm.settings.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        vm.setRemindersEnabled(granted)
+    }
+
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 24.dp)
+        ) {
+            Text("Goals and reminders", style = MaterialTheme.typography.titleLarge)
+
+            Spacer(Modifier.height(18.dp))
+
+            Text(
+                text = "Daily goal",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(0, 10, 20, 30, 60).forEach { minutes ->
+                    FilterChip(
+                        selected = settings.dailyGoalMinutes == minutes,
+                        onClick = { vm.setDailyGoal(minutes) },
+                        label = { Text(if (minutes == 0) "Off" else "$minutes min") }
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Daily reminder", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        text = "One nudge a day, skipped if you have already read",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                androidx.compose.material3.Switch(
+                    checked = settings.remindersEnabled,
+                    onCheckedChange = { wanted ->
+                        if (!wanted) {
+                            vm.setRemindersEnabled(false)
+                        } else if (android.os.Build.VERSION.SDK_INT >= 33 &&
+                            androidx.core.content.ContextCompat.checkSelfPermission(
+                                context,
+                                android.Manifest.permission.POST_NOTIFICATIONS
+                            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+                        ) {
+                            permissionLauncher.launch(
+                                android.Manifest.permission.POST_NOTIFICATIONS
+                            )
+                        } else {
+                            vm.setRemindersEnabled(true)
+                        }
+                    }
+                )
+            }
+
+            if (settings.remindersEnabled) {
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    text = "Remind me at",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf(8, 12, 18, 20, 21, 22).forEach { hour ->
+                        FilterChip(
+                            selected = settings.reminderHour == hour,
+                            onClick = { vm.setReminderTime(hour, 0) },
+                            label = { Text(String.format("%02d:00", hour)) }
+                        )
+                    }
+                }
+            }
         }
     }
 }

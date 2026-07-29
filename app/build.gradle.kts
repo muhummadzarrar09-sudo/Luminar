@@ -92,4 +92,5 @@ dependencies {
     ksp(libs.room.compiler)
 
     implementation(libs.datastore.preferences)
+    implementation(libs.work.runtime.ktx)
 }

@@ -38,6 +38,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -63,6 +64,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.recto.reader.data.ReaderFont
 import dev.recto.reader.data.ReaderSettings
+import dev.recto.reader.notifications.Notifications
 import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -104,9 +106,26 @@ fun ReaderScreen(
         }
     }
 
+    val appContext = LocalContext.current.applicationContext
+
     BackHandler {
         vm.persistNow()
+        vm.endSession { minutes, streak ->
+            Notifications.goalReached(appContext, minutes, streak)
+        }
         onBack()
+    }
+
+    // Covers every other way out - process death, config change, the user
+    // swiping the app away. Without this a session left open would keep
+    // counting while the phone sits in a pocket.
+    DisposableEffect(bookId) {
+        onDispose {
+            vm.persistNow()
+            vm.endSession { minutes, streak ->
+                Notifications.goalReached(appContext, minutes, streak)
+            }
+        }
     }
 
     // The page owns the whole screen, so the surface takes the reading theme
@@ -151,6 +170,9 @@ fun ReaderScreen(
                 vm = vm,
                 onBack = {
                     vm.persistNow()
+                    vm.endSession { minutes, streak ->
+                        Notifications.goalReached(appContext, minutes, streak)
+                    }
                     onBack()
                 }
             )

@@ -14,9 +14,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         BookCollectionCrossRef::class,
         AnnotationEntity::class,
         LookupCacheEntity::class,
-        VocabularyEntity::class
+        VocabularyEntity::class,
+        ReadingSessionEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = true
 )
 abstract class RectoDatabase : RoomDatabase() {
@@ -28,6 +29,8 @@ abstract class RectoDatabase : RoomDatabase() {
     abstract fun annotationDao(): AnnotationDao
 
     abstract fun lookupDao(): LookupDao
+
+    abstract fun readingSessionDao(): ReadingSessionDao
 
     companion object {
 
@@ -221,6 +224,44 @@ abstract class RectoDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v6 -> v7: reading sessions, for stats and streaks.
+         *
+         * No foreign key to books on purpose - deleting a book should not
+         * rewrite your reading history.
+         */
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `reading_sessions` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `bookId` INTEGER NOT NULL,
+                        `bookTitle` TEXT NOT NULL,
+                        `startedAt` INTEGER NOT NULL,
+                        `endedAt` INTEGER NOT NULL,
+                        `dayKey` INTEGER NOT NULL,
+                        `millisRead` INTEGER NOT NULL,
+                        `pagesTurned` INTEGER NOT NULL,
+                        `charsRead` INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_reading_sessions_dayKey` " +
+                        "ON `reading_sessions` (`dayKey`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_reading_sessions_startedAt` " +
+                        "ON `reading_sessions` (`startedAt`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_reading_sessions_bookId` " +
+                        "ON `reading_sessions` (`bookId`)"
+                )
+            }
+        }
+
         @Volatile
         private var instance: RectoDatabase? = null
 
@@ -233,7 +274,7 @@ abstract class RectoDatabase : RoomDatabase() {
                 )
                     .addMigrations(
                         MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4,
-                        MIGRATION_4_5, MIGRATION_5_6
+                        MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7
                     )
                     // No setForeignKeyConstraintsEnabled call here: that is
                     // not a RoomDatabase.Builder method, it belongs to

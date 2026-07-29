@@ -22,6 +22,8 @@ import dev.recto.reader.data.lookup.LookupState
 import dev.recto.reader.data.lookup.WikipediaSummary
 import dev.recto.reader.data.search.SearchHit
 import dev.recto.reader.data.search.TextSearch
+import dev.recto.reader.data.stats.ReadingStats
+import dev.recto.reader.data.stats.SessionTracker
 import dev.recto.reader.data.db.BookEntity
 import dev.recto.reader.data.db.RectoDatabase
 import kotlinx.coroutines.Dispatchers
@@ -60,6 +62,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     private val settingsRepo = SettingsRepository(app)
     private val annotationDao: AnnotationDao = db.annotationDao()
     private val lookupRepo = LookupRepository(db.lookupDao())
+    private val sessionTracker = SessionTracker(db.readingSessionDao())
 
     private val _bookIdFlow = MutableStateFlow(-1L)
 
@@ -126,6 +129,11 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                 onSuccess = { content ->
                     pendingRestoreChar = book.locator?.toIntOrNull()
                     _state.value = ReaderState.Ready(book, content, pages = null)
+                    sessionTracker.start(
+                        bookId = book.id,
+                        bookTitle = content.title ?: book.title,
+                        atChar = pendingRestoreChar ?: 0
+                    )
                 },
                 onFailure = { e ->
                     _state.value = ReaderState.Error(
@@ -657,6 +665,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         val pages = (_state.value as? ReaderState.Ready)?.pages ?: return
         if (_pageIndex.value < pages.size - 1) {
             _pageIndex.value++
+            sessionTracker.onPageTurned()
             scheduleSave()
         }
     }
@@ -664,6 +673,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     fun previous() {
         if (_pageIndex.value > 0) {
             _pageIndex.value--
+            sessionTracker.onPageTurned()
             scheduleSave()
         }
     }
@@ -693,6 +703,35 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     fun persistNow() {
         saveJob?.cancel()
         viewModelScope.launch { persist() }
+    }
+
+    /**
+     * Closes the reading session and, if today's goal was just crossed, says
+     * so. Called when leaving the reader or when the app goes to background -
+     * a session left open would otherwise keep counting in your pocket.
+     */
+    fun endSession(onGoalReached: (minutes: Int, streak: Int) -> Unit = { _, _ -> }) {
+        if (!sessionTracker.isRunning) return
+        val endChar = pageStartChar()
+        viewModelScope.launch {
+            val before = db.readingSessionDao().millisOnDay(ReadingStats.dayKey())
+            sessionTracker.stop(endChar) ?: return@launch
+
+            val settings = settings.value
+            val goal = settings.dailyGoalMinutes
+            if (goal <= 0) return@launch
+
+            val after = db.readingSessionDao().millisOnDay(ReadingStats.dayKey())
+            val beforeMin = (before / 60_000).toInt()
+            val afterMin = (after / 60_000).toInt()
+
+            // Only when the goal is crossed by THIS session, so finishing a
+            // second session on the same day does not congratulate you twice.
+            if (beforeMin < goal && afterMin >= goal) {
+                val days = db.readingSessionDao().recentDays().toSet()
+                onGoalReached(afterMin, ReadingStats.currentStreak(days))
+            }
+        }
     }
 
     private suspend fun persist() {
