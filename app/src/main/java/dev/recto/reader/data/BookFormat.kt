@@ -12,11 +12,20 @@ enum class BookFormat(
     val label: String,
     val extensions: List<String>,
     val mimeTypes: List<String>,
-    val readable: Boolean
+    /** Recto has a reader for this format. */
+    val readable: Boolean,
+    /**
+     * The format yields plain text we can search and look words up in.
+     *
+     * False for PDF: pages are rendered as images, exactly as Kindle does,
+     * because a PDF is a fixed layout and reflowing extracted text scrambles
+     * columns, tables and equations. Readable, but not searchable.
+     */
+    val hasText: Boolean = readable
 ) {
     EPUB("EPUB", listOf("epub"), listOf("application/epub+zip"), readable = true),
 
-    PDF("PDF", listOf("pdf"), listOf("application/pdf"), readable = false),
+    PDF("PDF", listOf("pdf"), listOf("application/pdf"), readable = true, hasText = false),
 
     TXT("Text", listOf("txt", "text"), listOf("text/plain"), readable = true),
 

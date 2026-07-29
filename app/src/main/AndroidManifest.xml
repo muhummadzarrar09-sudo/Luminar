@@ -64,6 +64,7 @@
                 <data android:mimeType="application/epub+zip" />
                 <data android:mimeType="application/x-epub+zip" />
                 <data android:mimeType="application/epub" />
+                <data android:mimeType="application/pdf" />
             </intent-filter>
 
             <!-- 2. Generic MIME plus an .epub path, for providers that shrug. -->
@@ -84,6 +85,8 @@
                 <data android:pathPattern=".*\\.epub" />
                 <data android:pathPattern=".*\\..*\\.epub" />
                 <data android:pathPattern=".*\\..*\\..*\\.epub" />
+                <data android:pathPattern=".*\\.pdf" />
+                <data android:pathPattern=".*\\..*\\.pdf" />
             </intent-filter>
 
             <!-- 3. No MIME type at all, just a path. File managers do this. -->
@@ -105,6 +108,7 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="application/epub+zip" />
                 <data android:mimeType="application/x-epub+zip" />
+                <data android:mimeType="application/pdf" />
                 <data android:mimeType="application/octet-stream" />
             </intent-filter>
 

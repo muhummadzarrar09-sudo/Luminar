@@ -16,6 +16,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.recto.reader.ui.library.LibraryScreen
 import dev.recto.reader.ui.library.LibraryViewModel
+import dev.recto.reader.ui.pdf.PdfScreen
 import dev.recto.reader.ui.reader.ReaderScreen
 import dev.recto.reader.ui.reader.VolumeKeyHandler
 import dev.recto.reader.ui.theme.RectoTheme
@@ -91,6 +92,8 @@ private fun RectoApp(incoming: MutableStateFlow<Intent?>) {
     val libraryVm: LibraryViewModel = viewModel()
 
     var openBookId by rememberSaveable { mutableStateOf<Long?>(null) }
+    /** Which engine the open book needs - PDF pages or reflowable text. */
+    var openIsPdf by rememberSaveable { mutableStateOf(false) }
     /** Character offset to jump to on open, from a library search hit. */
     var openAtChar by rememberSaveable { mutableStateOf<Int?>(null) }
 
@@ -117,23 +120,37 @@ private fun RectoApp(incoming: MutableStateFlow<Intent?>) {
         LibraryScreen(
             onOpenBook = { book ->
                 openAtChar = null
+                openIsPdf = book.format == dev.recto.reader.data.BookFormat.PDF.name
                 openBookId = book.id
             },
             onOpenBookAt = { book, charOffset ->
                 openAtChar = charOffset
+                openIsPdf = book.format == dev.recto.reader.data.BookFormat.PDF.name
                 openBookId = book.id
             },
             vm = libraryVm
         )
     } else {
-        ReaderScreen(
-            bookId = id,
-            jumpToChar = openAtChar,
-            onJumpConsumed = { openAtChar = null },
-            onBack = {
-                openAtChar = null
-                openBookId = null
-            }
-        )
+        // PDFs are fixed-layout, so they get their own engine: rendered
+        // pages with zoom, rather than reflowable text.
+        if (openIsPdf) {
+            PdfScreen(
+                bookId = id,
+                onBack = {
+                    openAtChar = null
+                    openBookId = null
+                }
+            )
+        } else {
+            ReaderScreen(
+                bookId = id,
+                jumpToChar = openAtChar,
+                onJumpConsumed = { openAtChar = null },
+                onBack = {
+                    openAtChar = null
+                    openBookId = null
+                }
+            )
+        }
     }
 }

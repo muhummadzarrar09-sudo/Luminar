@@ -35,10 +35,11 @@ class LibrarySearcher(private val repo: BookRepository) {
             return@flow
         }
 
-        // Only formats we can actually read. A PDF in the library would
-        // otherwise be counted as searched and silently contribute nothing.
+        // Only formats with extractable text. PDFs are readable but render
+        // as page images, so they have nothing for a text scan to look at -
+        // counting them as searched would silently report false confidence.
         val searchable = books
-            .filter { runCatching { BookFormat.valueOf(it.format).readable }.getOrDefault(false) }
+            .filter { runCatching { BookFormat.valueOf(it.format).hasText }.getOrDefault(false) }
             .sortedByDescending { it.lastOpenedAt ?: it.addedAt }
 
         var progress = LibrarySearchProgress(
