@@ -15,10 +15,17 @@ enum class ReaderTheme(
     /** True when the page is dark, so system bars can be told to match. */
     val isDark: Boolean
 ) {
+    // Ink is deliberately not black, and paper is deliberately not white.
+    //
+    // Maximum contrast is the single biggest cause of screen eye strain:
+    // pure #000 on pure #FFF is a contrast ratio of 21:1, roughly double what
+    // print achieves. Real book paper is a warm off-white and real ink is a
+    // soft near-black, landing around 12-14:1 - still far above the 7:1 that
+    // WCAG calls enhanced, but without the glare.
     PAPER(
         label = "Paper",
-        background = Color(0xFFFBF7F0),
-        text = Color(0xFF1A1714),
+        background = Color(0xFFFAF6EE),
+        text = Color(0xFF2B2620),
         muted = Color(0xFF6B615A),
         isDark = false
     ),
@@ -38,16 +45,21 @@ enum class ReaderTheme(
     ),
     NIGHT(
         label = "Night",
-        background = Color(0xFF15130F),
-        text = Color(0xFFE8E2D8),
-        muted = Color(0xFF9A9188),
+        background = Color(0xFF17150F),
+        // Warm grey rather than white. Bright text on a dark field blooms at
+        // the edges - halation - which is worse for astigmatic readers, and
+        // dropping the luminance a little removes most of it.
+        text = Color(0xFFD8D2C6),
+        muted = Color(0xFF938B80),
         isDark = true
     ),
     BLACK(
         label = "Black",
         background = Color(0xFF000000),
-        text = Color(0xFFD6D2CB),
-        muted = Color(0xFF8A857E),
+        // Kept dimmer still: on OLED the pixels around a glyph are genuinely
+        // off, so the edge contrast is even harsher than on Night.
+        text = Color(0xFFC9C4BC),
+        muted = Color(0xFF807B74),
         isDark = true
     );
 
@@ -86,10 +98,22 @@ enum class LineSpacing(val label: String, val multiplier: Float) {
     }
 }
 
+/**
+ * Page margins.
+ *
+ * These are the margins on a phone in portrait, where the screen is already
+ * narrow enough that the line length lands around 35-45 characters - shorter
+ * than print, but comfortable.
+ *
+ * Landscape is the real problem, and margins cannot fix it: on a 842dp-wide
+ * screen the line runs to nearly 90 characters, well past the ~75 at which
+ * the eye starts losing its place on the return sweep. That is handled by
+ * capping the text column width instead - see MaxLineWidth in the reader.
+ */
 enum class PageMargin(val label: String, val sizeDp: Int) {
     NARROW("Narrow", 16),
-    NORMAL("Normal", 26),
-    WIDE("Wide", 40);
+    NORMAL("Normal", 24),
+    WIDE("Wide", 36);
 
     companion object {
         fun fromName(name: String?): PageMargin =

@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.padding
@@ -54,11 +55,15 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.Hyphens
+import androidx.compose.ui.text.style.LineBreak
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -70,6 +75,20 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 private val PageVerticalPadding = 20.dp
+
+/**
+ * Maximum width of the text column.
+ *
+ * Typography's oldest rule: a line longer than roughly 75 characters makes
+ * the eye lose its place on the return sweep, which is exactly the tiring
+ * part of reading on a wide screen. In landscape a phone would otherwise set
+ * lines of nearly 90 characters.
+ *
+ * Capping the column and centring it is what every well-set book does, and
+ * what Kindle does in landscape. Portrait is narrower than this already, so
+ * the cap simply never applies there.
+ */
+private val MaxLineWidth = 560.dp
 
 @Composable
 fun ReaderScreen(
@@ -320,7 +339,36 @@ private fun ReaderContent(
             fontSize = settings.fontSizeSp.sp,
             lineHeight = (settings.fontSizeSp * settings.lineSpacing.multiplier).sp,
             textAlign = if (settings.justify) TextAlign.Justify else TextAlign.Start,
-            color = settings.theme.text
+            color = settings.theme.text,
+
+            // The four settings below are what separate "text on a screen"
+            // from "a page of a book".
+
+            // Hyphenation. Justified text without it opens rivers of white
+            // space between words, which is the single most tiring thing
+            // about badly set justified text. Requires LineBreak.Paragraph:
+            // the Simple strategy only hyphenates when a word alone exceeds
+            // the line, which is almost never.
+            hyphens = Hyphens.Auto,
+
+            // Paragraph-aware line breaking looks ahead over the whole
+            // paragraph rather than greedily filling each line, so word
+            // spacing stays even instead of lurching line to line. Slightly
+            // more expensive, imperceptible at page size.
+            lineBreak = LineBreak.Paragraph,
+
+            // A whisper of extra tracking. Print sets body text looser than
+            // screen defaults, and at reading sizes this measurably reduces
+            // letter crowding without looking spaced out.
+            letterSpacing = 0.01.em,
+
+            // Trim the extra leading the platform adds above the first line
+            // and below the last, so the text block sits optically centred
+            // in the margins rather than pushed down.
+            lineHeightStyle = LineHeightStyle(
+                alignment = LineHeightStyle.Alignment.Center,
+                trim = LineHeightStyle.Trim.Both
+            )
         )
     }
 
@@ -388,6 +436,8 @@ private fun ReaderContent(
             Modifier
                 .fillMaxSize()
                 .safeDrawingPadding()
+                .widthIn(max = MaxLineWidth)
+                .align(Alignment.TopCenter)
                 .padding(horizontal = horizontalPadding, vertical = PageVerticalPadding)
                 .onSizeChanged { size ->
                     if (size.width > 0 && size.height > 0) {
@@ -719,19 +769,22 @@ private fun PageSurface(
             label = "page"
         ) { index ->
             val page = pages.getOrNull(index)
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(background)
-                    // Insets first, then margins. Whatever survives all of
-                    // that is exactly the box the text gets, so that is the
-                    // box we measure and paginate against.
-                    .safeDrawingPadding()
-                    .padding(
-                        horizontal = horizontalPadding,
-                        vertical = PageVerticalPadding
-                    )
-            ) {
+            Box(Modifier.fillMaxSize().background(background)) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        // Insets, then the line-length cap, then margins.
+                        // Whatever survives all of that is exactly the box the
+                        // text gets, so it must match the probe above exactly
+                        // or pagination measures the wrong area.
+                        .safeDrawingPadding()
+                        .widthIn(max = MaxLineWidth)
+                        .align(Alignment.TopCenter)
+                        .padding(
+                            horizontal = horizontalPadding,
+                            vertical = PageVerticalPadding
+                        )
+                ) {
                 if (page != null) {
                     val pageStart = pageStartOf(index)
 
@@ -813,6 +866,7 @@ private fun PageSurface(
                                 )
                             }
                     )
+                    }
                 }
             }
         }

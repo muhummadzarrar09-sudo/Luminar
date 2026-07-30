@@ -3,12 +3,11 @@ package dev.recto.reader.ui.reader
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -23,6 +22,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -64,45 +64,82 @@ fun SelectionToolbar(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    // Two rows, not one scrolling strip.
+    //
+    // The old version put four swatches and four text buttons in a single
+    // horizontally scrolling Row - nine hit targets in a line, which meant
+    // scrolling to reach Cancel and no visual grouping at all. Kindle splits
+    // it: colours are one decision, actions are another, and neither should
+    // require scrolling.
+    //
+    // Everything now fits without scroll because the actions are icon-and-
+    // label pairs sized to the three that matter, and dismissal moved to
+    // tapping the page - which the reader already supports.
     Surface(
-        // Constrained and scrollable because four colour swatches plus four
-        // actions do not fit across a narrow phone, and in landscape the
-        // toolbar was running off both edges with Cancel unreachable.
-        modifier = modifier.widthIn(max = 560.dp),
-        shape = RoundedCornerShape(28.dp),
-        tonalElevation = 4.dp,
-        shadowElevation = 8.dp
+        modifier = modifier.widthIn(max = 380.dp),
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 3.dp,
+        shadowElevation = 10.dp
     ) {
-        Row(
-            Modifier
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        Column(
+            Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            HighlightColour.entries.forEachIndexed { index, colour ->
-                Box(
-                    Modifier
-                        .size(30.dp)
-                        .clip(CircleShape)
-                        .background(colour.onLight)
-                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
-                        .clickable { onColour(index) }
-                )
+            // Colours. Larger targets than before - 36dp reads as a
+            // deliberate swatch rather than a dot, and clears the 32dp
+            // minimum where mis-taps start.
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                HighlightColour.entries.forEachIndexed { index, colour ->
+                    Box(
+                        Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(colour.onLight)
+                            .border(
+                                width = 1.dp,
+                                color = MaterialTheme.colorScheme.outlineVariant
+                                    .copy(alpha = 0.6f),
+                                shape = CircleShape
+                            )
+                            .clickable { onColour(index) }
+                    )
+                }
             }
 
-            Box(
-                Modifier
-                    .width(1.dp)
-                    .height(24.dp)
-                    .background(MaterialTheme.colorScheme.outlineVariant)
+            Spacer(Modifier.height(14.dp))
+
+            HorizontalDivider(
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
             )
 
-            TextButton(onClick = onDefine) { Text("Define") }
-            TextButton(onClick = onNote) { Text("Note") }
-            TextButton(onClick = onCopy) { Text("Copy") }
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            Spacer(Modifier.height(6.dp))
+
+            // Actions. Three, evenly weighted, no scroll. Cancel is gone:
+            // tapping the page already dismisses a selection, and a Cancel
+            // button in a floating bar is the least-wanted item competing for
+            // the most-wanted space.
+            Row(Modifier.fillMaxWidth()) {
+                ToolbarAction("Define", Modifier.weight(1f), onDefine)
+                ToolbarAction("Note", Modifier.weight(1f), onNote)
+                ToolbarAction("Copy", Modifier.weight(1f), onCopy)
+            }
         }
+    }
+}
+
+@Composable
+private fun ToolbarAction(
+    label: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    TextButton(
+        onClick = onClick,
+        modifier = modifier,
+        contentPadding = PaddingValues(vertical = 10.dp, horizontal = 4.dp)
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
