@@ -178,6 +178,30 @@ if (-not $jarLooksValid) {
 
 if (-not (Test-Path "gradlew.bat")) { Die "gradlew.bat is missing." "It should be committed with the project. Re-pull the repo." }
 
+# ------------------------------------------------------------- 2b. static check
+# Runs in under a second and catches the mistake that has broken this build
+# more than any other: a symbol used with no import. Kotlin only reports the
+# first file it chokes on, so one missing import can hide three more.
+# Skipped silently if Python is not installed - it is a convenience, not a
+# requirement, and the compiler is still the real authority.
+if (Test-Path "tools\check_kotlin.py") {
+    $py = $null
+    foreach ($cand in @("py", "python", "python3")) {
+        $cmd = Get-Command $cand -ErrorAction SilentlyContinue
+        if ($cmd) { $py = $cand; break }
+    }
+    if ($py) {
+        Step "Static checks..."
+        if ($py -eq "py") { & $py -3 "tools\check_kotlin.py" } else { & $py "tools\check_kotlin.py" }
+        if ($LASTEXITCODE -ne 0) {
+            Die "Static checks failed." "Fix the problems listed above, then re-run. They would fail the compile anyway, just slower and with less detail."
+        }
+    } else {
+        Warn "Python not found - skipping static checks."
+        Info "Not a problem; the compiler catches the same things, just slower."
+    }
+}
+
 # ------------------------------------------------------------------ 3. clean
 if ($Clean) {
     Step "Cleaning..."
