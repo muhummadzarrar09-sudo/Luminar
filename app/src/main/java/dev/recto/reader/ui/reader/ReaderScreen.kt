@@ -4,6 +4,7 @@ import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -32,6 +34,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -51,8 +55,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -338,6 +343,8 @@ private fun ReaderContent(
 ) {
     val measurer = rememberTextMeasurer()
 
+    val undo by vm.undo.collectAsStateWithLifecycle()
+
     // Derived from settings, so any typography change produces a new style
     // object and therefore a re-pagination.
     val readingStyle = remember(settings) {
@@ -450,7 +457,14 @@ private fun ReaderContent(
     // A stale rectangle is worse than none: it would point the caret at words
     // that are no longer selected.
     LaunchedEffect(selection) {
-        if (selection == null) selectionBounds = null
+        if (selection == null) {
+            selectionBounds = null
+            // Also forget the measured size, or the NEXT selection skips its
+            // entrance: animateFloatAsState starts at its target, so a card
+            // that is already "measured" on first composition animates from
+            // 1 to 1. Only the very first selection would ever animate.
+            toolbarSize = IntSize.Zero
+        }
     }
 
     Box(
@@ -562,6 +576,24 @@ private fun ReaderContent(
                 caretInset = with(density) { 22.dp.toPx() }
             )
 
+            // Grow out of the caret.
+            //
+            // Doubles as the fix for the first-frame flash: until the card has
+            // been measured its size is zero, the placement is meaningless,
+            // and it would otherwise appear at the top-left corner for one
+            // frame before jumping. Progress starts at 0 and only runs once a
+            // real measurement exists, so that frame is invisible instead.
+            //
+            // Entrance only, deliberately. While you drag to extend a
+            // selection the card follows your finger every frame - animating
+            // that would make it lag behind the thing it is pointing at.
+            val measured = toolbarSize.width > 0
+            val appear by animateFloatAsState(
+                targetValue = if (measured) 1f else 0f,
+                animationSpec = tween(durationMillis = 130),
+                label = "toolbarAppear"
+            )
+
             SelectionToolbar(
                 onColour = vm::highlightSelection,
                 onDefine = vm::lookUpSelection,
@@ -572,14 +604,33 @@ private fun ReaderContent(
                 },
                 caretX = with(density) { placement.caretX.toDp() },
                 caretAbove = placement.above,
+                defaultColour = settings.defaultHighlightColour,
+                onDefaultColour = vm::setDefaultHighlightColour,
+                darkTheme = settings.theme.isDark,
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .offset { IntOffset(placement.x, placement.y) }
                     .onSizeChanged { toolbarSize = it }
-                    // Hidden for the single frame before its size is known,
-                    // otherwise the card flashes at the top-left corner and
-                    // jumps into place.
-                    .alpha(if (toolbarSize.width == 0) 0f else 1f)
+                    .graphicsLayer {
+                        alpha = appear
+                        // 0.9 rather than 0: a card springing from nothing
+                        // reads as a popup, a card easing up from nearly
+                        // full size reads as paper being placed down.
+                        val s = 0.90f + 0.10f * appear
+                        scaleX = s
+                        scaleY = s
+                        // Pivot on the caret, so it grows out of the words
+                        // rather than out of its own middle.
+                        transformOrigin = TransformOrigin(
+                            pivotFractionX = if (toolbarSize.width > 0) {
+                                (placement.caretX / toolbarSize.width)
+                                    .coerceIn(0f, 1f)
+                            } else {
+                                0.5f
+                            },
+                            pivotFractionY = if (placement.above) 1f else 0f
+                        )
+                    }
             )
         }
 
@@ -764,6 +815,60 @@ private fun ReaderContent(
                 color = settings.theme.muted,
                 trackColor = settings.theme.background
             )
+        }
+
+        // Undo.
+        //
+        // A hand-rolled bar rather than a Scaffold's SnackbarHost, because
+        // this screen has no Scaffold - it is a bare Box so the page can run
+        // edge to edge under the system bars - and adding one just to host a
+        // snackbar would re-introduce the insets the reader deliberately
+        // manages itself.
+        //
+        // Sits above the selection toolbar in the Box so it is never covered
+        // by it. It also gets out of the way of the bottom chrome, since
+        // undoing right after highlighting is exactly when the scrubber might
+        // be open.
+        AnimatedVisibility(
+            visible = undo != null,
+            enter = fadeIn(tween(120)) + slideInVertically(tween(200)) { it / 2 },
+            exit = fadeOut(tween(120)) + slideOutVertically(tween(160)) { it / 2 },
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            // Held so the text does not blank out during the exit animation:
+            // `undo` is already null by then, and reading it directly would
+            // leave an empty bar sliding away.
+            val shown = remember { mutableStateOf<UndoableAction?>(null) }
+            LaunchedEffect(undo) { if (undo != null) shown.value = undo }
+
+            Surface(
+                modifier = Modifier
+                    .navigationBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 16.dp),
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.inverseSurface,
+                shadowElevation = 6.dp
+            ) {
+                Row(
+                    Modifier.padding(start = 16.dp, end = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = shown.value?.message.orEmpty(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.inverseOnSurface
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    TextButton(
+                        onClick = vm::performUndo,
+                        colors = ButtonDefaults.textButtonColors(
+                            contentColor = MaterialTheme.colorScheme.inversePrimary
+                        )
+                    ) {
+                        Text("Undo")
+                    }
+                }
+            }
         }
     }
 }

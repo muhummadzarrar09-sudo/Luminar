@@ -174,7 +174,19 @@ data class ReaderSettings(
     val reminderHour: Int = 20,
     val reminderMinute: Int = 0,
 
-    val streakAlertsEnabled: Boolean = true
+    val streakAlertsEnabled: Boolean = true,
+
+    // --- annotating ---
+
+    /**
+     * Which highlighter colour a plain tap uses, as an index into
+     * [HighlightColour]. Long-pressing a swatch changes it.
+     *
+     * Kindle has no equivalent and it is the small thing that annoys most:
+     * if you always highlight in blue, you should not have to aim for blue
+     * every single time.
+     */
+    val defaultHighlightColour: Int = 0
 ) {
     companion object {
         const val MIN_FONT_SP = 12

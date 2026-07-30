@@ -2,7 +2,9 @@ package dev.recto.reader.ui.reader
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -41,6 +43,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -58,10 +62,14 @@ import dev.recto.reader.data.db.AnnotationKind
  * cover the very text you just selected, which is exactly what you want to
  * keep looking at while choosing a colour.
  *
- * @param caretX     caret tip measured from this card's left edge, or null
- *                   for no caret at all
- * @param caretAbove true when the card is above the selection, so the caret
- *                   hangs off the bottom edge pointing down
+ * @param caretX          caret tip measured from this card's left edge, or
+ *                        null for no caret at all
+ * @param caretAbove      true when the card is above the selection, so the
+ *                        caret hangs off the bottom edge pointing down
+ * @param defaultColour   index of the colour a plain tap uses, ringed in the
+ *                        swatch row
+ * @param onDefaultColour long-press a swatch to make it the default
+ * @param darkTheme       picks the light or dark variant of each swatch
  */
 @Composable
 fun SelectionToolbar(
@@ -71,7 +79,10 @@ fun SelectionToolbar(
     onCopy: () -> Unit,
     modifier: Modifier = Modifier,
     caretX: Dp? = null,
-    caretAbove: Boolean = true
+    caretAbove: Boolean = true,
+    defaultColour: Int = 0,
+    onDefaultColour: (Int) -> Unit = {},
+    darkTheme: Boolean = false
 ) {
     // A caret welds the card to the words. Without one a floating panel is
     // just a panel that happens to be nearby; with one it is unmistakably
@@ -93,7 +104,10 @@ fun SelectionToolbar(
             onColour = onColour,
             onDefine = onDefine,
             onNote = onNote,
-            onCopy = onCopy
+            onCopy = onCopy,
+            defaultColour = defaultColour,
+            onDefaultColour = onDefaultColour,
+            darkTheme = darkTheme
         )
 
         if (caretX != null && caretAbove) {
@@ -146,12 +160,16 @@ private val CaretHeight = 9.dp
  */
 private val ToolbarElevation = 3.dp
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SelectionToolbarCard(
     onColour: (Int) -> Unit,
     onDefine: () -> Unit,
     onNote: () -> Unit,
     onCopy: () -> Unit,
+    defaultColour: Int,
+    onDefaultColour: (Int) -> Unit,
+    darkTheme: Boolean,
     modifier: Modifier = Modifier
 ) {
     // Two rows, not one scrolling strip.
@@ -179,20 +197,48 @@ private fun SelectionToolbarCard(
             // Colours. Larger targets than before - 36dp reads as a
             // deliberate swatch rather than a dot, and clears the 32dp
             // minimum where mis-taps start.
+            //
+            // The swatches follow the page's own light/dark variants, so what
+            // you tap is the colour you get. Showing the light yellow on a
+            // Night page and then painting the dark one was quietly wrong.
+            val haptics = LocalHapticFeedback.current
+
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 HighlightColour.entries.forEachIndexed { index, colour ->
+                    val isDefault = index == defaultColour
+
                     Box(
                         Modifier
                             .size(36.dp)
                             .clip(CircleShape)
-                            .background(colour.onLight)
+                            .background(colour.colorFor(darkTheme))
+                            // The default is ringed in the theme's accent at
+                            // full width rather than badged with a tick: a
+                            // tick sitting on a highlighter colour is hard to
+                            // read on yellow and invisible on pink.
                             .border(
-                                width = 1.dp,
-                                color = MaterialTheme.colorScheme.outlineVariant
-                                    .copy(alpha = 0.6f),
+                                width = if (isDefault) 2.dp else 1.dp,
+                                color = if (isDefault) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.outlineVariant
+                                        .copy(alpha = 0.6f)
+                                },
                                 shape = CircleShape
                             )
-                            .clickable { onColour(index) }
+                            .combinedClickable(
+                                onClick = { onColour(index) },
+                                onLongClick = {
+                                    // A long-press with no visible result
+                                    // feels broken, and the ring is small.
+                                    // The tick of haptic feedback is what
+                                    // tells you the press registered.
+                                    haptics.performHapticFeedback(
+                                        HapticFeedbackType.LongPress
+                                    )
+                                    onDefaultColour(index)
+                                }
+                            )
                     )
                 }
             }

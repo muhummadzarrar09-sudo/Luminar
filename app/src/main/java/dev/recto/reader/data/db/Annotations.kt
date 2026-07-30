@@ -101,6 +101,16 @@ interface AnnotationDao {
     suspend fun delete(id: Long)
 
     /**
+     * One annotation by id.
+     *
+     * Needed by undo: the row has to be read BEFORE it is deleted, because
+     * afterwards there is nothing left to look up and the snackbar has to be
+     * able to put it back exactly as it was.
+     */
+    @Query("SELECT * FROM annotations WHERE id = :id LIMIT 1")
+    suspend fun byId(id: Long): AnnotationEntity?
+
+    /**
      * Anything overlapping the given range. Used to spot an existing highlight
      * under a fresh selection, so re-selecting the same words edits rather
      * than stacks a second highlight on top.

@@ -45,6 +45,7 @@ class SettingsRepository(private val context: Context) {
         val reminderHour = intPreferencesKey("reminder_hour")
         val reminderMinute = intPreferencesKey("reminder_minute")
         val streakAlerts = booleanPreferencesKey("streak_alerts")
+        val defaultHighlight = intPreferencesKey("default_highlight_colour")
     }
 
     val settings: Flow<ReaderSettings> = context.settingsStore.data
@@ -72,7 +73,11 @@ class SettingsRepository(private val context: Context) {
                 remindersEnabled = prefs[Keys.reminders] ?: false,
                 reminderHour = (prefs[Keys.reminderHour] ?: 20).coerceIn(0, 23),
                 reminderMinute = (prefs[Keys.reminderMinute] ?: 0).coerceIn(0, 59),
-                streakAlertsEnabled = prefs[Keys.streakAlerts] ?: true
+                streakAlertsEnabled = prefs[Keys.streakAlerts] ?: true,
+                // Clamped: a colour was removed once already and an
+                // out-of-range index would crash fromIndex' callers.
+                defaultHighlightColour = (prefs[Keys.defaultHighlight] ?: 0)
+                    .coerceIn(0, HighlightColour.entries.size - 1)
             )
         }
 
@@ -118,6 +123,10 @@ class SettingsRepository(private val context: Context) {
     }
 
     suspend fun setStreakAlerts(value: Boolean) = edit { it[Keys.streakAlerts] = value }
+
+    suspend fun setDefaultHighlightColour(index: Int) = edit {
+        it[Keys.defaultHighlight] = index.coerceIn(0, HighlightColour.entries.size - 1)
+    }
 
     private suspend fun edit(block: (MutablePreferences) -> Unit) {
         context.settingsStore.edit(block)

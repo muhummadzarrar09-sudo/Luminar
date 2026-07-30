@@ -54,6 +54,53 @@ sealed interface ReaderState {
 /** Which overlay, if any, is showing over the page. */
 enum class ReaderSheet { NONE, SETTINGS, CONTENTS, NOTEBOOK, VOCABULARY, SEARCH }
 
+/**
+ * Something that just happened and can be taken back.
+ *
+ * Deleted rows are carried whole rather than by id, because by the time undo
+ * runs the row is gone from the database and there is nothing left to look
+ * up. Re-inserting the entity restores its id too, since it is the primary
+ * key - so a note that was attached to a highlight comes back attached.
+ */
+sealed interface UndoableAction {
+    /** What the snackbar says happened. */
+    val message: String
+
+    /** A new annotation appeared. Undo deletes it. */
+    data class Created(
+        val created: AnnotationEntity,
+        override val message: String
+    ) : UndoableAction
+
+    /** Annotations were removed. Undo puts them back. */
+    data class Deleted(
+        val removed: List<AnnotationEntity>,
+        override val message: String
+    ) : UndoableAction
+
+    /**
+     * Annotations were swallowed by a new one - what happens when a highlight
+     * overlaps existing highlights. Undo removes the new one and restores the
+     * originals, which is the only way to make "highlight over a highlight"
+     * reversible.
+     */
+    data class Replaced(
+        val created: AnnotationEntity,
+        val removed: List<AnnotationEntity>,
+        override val message: String
+    ) : UndoableAction
+}
+
+/**
+ * How long an undo stays on offer.
+ *
+ * Long enough to notice a mis-tap and react, short enough that the snackbar
+ * is not still sitting over the page when you have moved on. Material's
+ * "long" snackbar is 10s, which is too long to keep deleted rows in memory
+ * for something this small.
+ */
+private const val UNDO_WINDOW_MS = 6_000L
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -84,6 +131,69 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     private val _editingNote = MutableStateFlow<AnnotationEntity?>(null)
     val editingNote: StateFlow<AnnotationEntity?> = _editingNote.asStateFlow()
 
+    /**
+     * The last undoable thing that happened, or null.
+     *
+     * Only ONE step is kept. A stack sounds better and is worse: undo here is
+     * for the mis-tap you just made, and a reader who has highlighted three
+     * more passages since does not want the fourth undo to silently remove
+     * something from five minutes ago.
+     */
+    private val _undo = MutableStateFlow<UndoableAction?>(null)
+    val undo: StateFlow<UndoableAction?> = _undo.asStateFlow()
+
+    private var undoTimer: Job? = null
+
+    /**
+     * Offers an undo, and retracts it after a while.
+     *
+     * The timeout matters for correctness, not just tidiness: [UndoableAction]
+     * holds deleted rows in memory, and an offer that never expires is a
+     * promise we cannot keep once the book closes.
+     */
+    private fun offerUndo(action: UndoableAction) {
+        _undo.value = action
+        undoTimer?.cancel()
+        undoTimer = viewModelScope.launch {
+            delay(UNDO_WINDOW_MS)
+            // Only clear if it is still the same offer. Without this check a
+            // stale timer wipes a newer undo that arrived in the meantime.
+            if (_undo.value === action) _undo.value = null
+        }
+    }
+
+    fun dismissUndo() {
+        undoTimer?.cancel()
+        _undo.value = null
+    }
+
+    /**
+     * Puts back whatever the last action removed or changed.
+     *
+     * Deleted rows are re-inserted with their original ids, so anything
+     * pointing at them still resolves and the notebook keeps its ordering.
+     */
+    fun performUndo() {
+        val action = _undo.value ?: return
+        undoTimer?.cancel()
+        _undo.value = null
+
+        viewModelScope.launch {
+            when (action) {
+                is UndoableAction.Created ->
+                    annotationDao.delete(action.created.id)
+
+                is UndoableAction.Deleted ->
+                    action.removed.forEach { annotationDao.insert(it) }
+
+                is UndoableAction.Replaced -> {
+                    annotationDao.delete(action.created.id)
+                    action.removed.forEach { annotationDao.insert(it) }
+                }
+            }
+        }
+    }
+
     val settings: StateFlow<ReaderSettings> = settingsRepo.settings
         .stateIn(viewModelScope, SharingStarted.Eagerly, ReaderSettings())
 
@@ -109,6 +219,11 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         if (bookId == id && _state.value is ReaderState.Ready) return
         bookId = id
         _bookIdFlow.value = id
+
+        // An undo offered in the previous book must not survive into this one.
+        // The rows it holds belong to a book that is no longer open, and
+        // "Undo" would silently edit something you cannot see.
+        dismissUndo()
 
         viewModelScope.launch {
             _state.value = ReaderState.Loading
@@ -455,22 +570,38 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             val text = textBetween(ready, start, end)
             val chapter = chapterAt(ready, start)
 
-            annotationDao.insert(
-                AnnotationEntity(
-                    bookId = bookId,
-                    kind = if (keptNote.isNullOrBlank()) {
-                        AnnotationKind.HIGHLIGHT.name
-                    } else {
-                        AnnotationKind.NOTE.name
-                    },
-                    startChar = start,
-                    endChar = end,
-                    selectedText = text,
-                    note = keptNote,
-                    colour = colour,
-                    chapterIndex = chapter.first,
-                    chapterTitle = chapter.second
-                )
+            val entity = AnnotationEntity(
+                bookId = bookId,
+                kind = if (keptNote.isNullOrBlank()) {
+                    AnnotationKind.HIGHLIGHT.name
+                } else {
+                    AnnotationKind.NOTE.name
+                },
+                startChar = start,
+                endChar = end,
+                selectedText = text,
+                note = keptNote,
+                colour = colour,
+                chapterIndex = chapter.first,
+                chapterTitle = chapter.second
+            )
+            // Room hands back the generated id; the entity as written has id
+            // 0, so undo would delete nothing without this.
+            val id = annotationDao.insert(entity)
+
+            offerUndo(
+                if (overlaps.isEmpty()) {
+                    UndoableAction.Created(
+                        created = entity.copy(id = id),
+                        message = "Highlighted"
+                    )
+                } else {
+                    UndoableAction.Replaced(
+                        created = entity.copy(id = id),
+                        removed = overlaps,
+                        message = "Highlights merged"
+                    )
+                }
             )
             _selection.value = null
         }
@@ -581,7 +712,23 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun deleteAnnotation(id: Long) {
-        viewModelScope.launch { annotationDao.delete(id) }
+        viewModelScope.launch {
+            // Read it first - after the delete there is nothing to put back.
+            val existing = annotationDao.byId(id)
+            annotationDao.delete(id)
+            if (existing != null) {
+                offerUndo(
+                    UndoableAction.Deleted(
+                        removed = listOf(existing),
+                        message = when (existing.kind) {
+                            AnnotationKind.BOOKMARK.name -> "Bookmark removed"
+                            AnnotationKind.NOTE.name -> "Note deleted"
+                            else -> "Highlight removed"
+                        }
+                    )
+                )
+            }
+        }
     }
 
     /** Toggles a bookmark on the current page. */
@@ -656,6 +803,9 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     fun setLineSpacing(v: LineSpacing) = viewModelScope.launch { settingsRepo.setLineSpacing(v) }
     fun setMargin(v: PageMargin) = viewModelScope.launch { settingsRepo.setMargin(v) }
     fun setJustify(v: Boolean) = viewModelScope.launch { settingsRepo.setJustify(v) }
+
+    fun setDefaultHighlightColour(index: Int) =
+        viewModelScope.launch { settingsRepo.setDefaultHighlightColour(index) }
     fun setVolumeKeys(v: Boolean) = viewModelScope.launch { settingsRepo.setVolumeKeys(v) }
     fun setKeepScreenOn(v: Boolean) = viewModelScope.launch { settingsRepo.setKeepScreenOn(v) }
     fun setWarmth(v: Float) = viewModelScope.launch { settingsRepo.setWarmth(v) }
