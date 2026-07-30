@@ -119,4 +119,8 @@ interface ReadingSessionDao {
 
     @Query("DELETE FROM reading_sessions")
     suspend fun clearAll()
+
+    /** Snapshot for backup. */
+    @Query("SELECT * FROM reading_sessions ORDER BY startedAt ASC")
+    suspend fun allOnce(): List<ReadingSessionEntity>
 }

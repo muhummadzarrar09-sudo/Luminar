@@ -15,6 +15,7 @@ import dev.recto.reader.data.SettingsRepository
 import dev.recto.reader.data.db.AnnotationDao
 import dev.recto.reader.data.db.AnnotationEntity
 import dev.recto.reader.data.db.AnnotationKind
+import dev.recto.reader.data.db.RecentLookupEntity
 import dev.recto.reader.data.db.VocabularyEntity
 import dev.recto.reader.data.lookup.DictionaryEntry
 import dev.recto.reader.data.lookup.LookupRepository
@@ -375,6 +376,17 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     val dueCount: StateFlow<Int> = lookupRepo.observeDueCount()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
+    /** Everything looked up recently, newest first. */
+    val recentLookups: StateFlow<List<RecentLookupEntity>> =
+        lookupRepo.observeRecentLookups()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun deleteRecentLookup(id: Long) =
+        viewModelScope.launch { lookupRepo.deleteRecent(id) }
+
+    fun clearRecentLookups() =
+        viewModelScope.launch { lookupRepo.clearRecent() }
+
     private val _wordSaved = MutableStateFlow(false)
     val wordSaved: StateFlow<Boolean> = _wordSaved.asStateFlow()
 
@@ -400,7 +412,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         // A dictionary can only answer single words. Asking it about a
         // sentence wastes a request and returns a confusing "not found",
         // so we say plainly that it does not apply instead.
-        if (isWordLike(clean)) {
+        val dictionaryJob = if (isWordLike(clean)) {
             viewModelScope.launch {
                 _dictionary.value = lookupRepo.define(clean)
             }
@@ -409,10 +421,33 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                 "Dictionaries only define single words. Try Wikipedia or a web " +
                     "search for a phrase."
             )
+            null
         }
 
-        viewModelScope.launch {
+        val wikipediaJob = viewModelScope.launch {
             _wikipedia.value = lookupRepo.wikipedia(clean)
+        }
+
+        // Record it once both panes have settled, so the stored summary is
+        // whatever we actually found rather than "Loading". Waiting also
+        // means a word looked up twice keeps its best summary instead of
+        // being overwritten by an in-flight blank.
+        viewModelScope.launch {
+            dictionaryJob?.join()
+            wikipediaJob.join()
+
+            val ready = _state.value as? ReaderState.Ready
+            val dict = (_dictionary.value as? LookupState.Success)?.data
+            val wiki = (_wikipedia.value as? LookupState.Success)?.data
+
+            lookupRepo.recordLookup(
+                term = clean,
+                summary = dict?.entries?.firstOrNull()?.senses?.firstOrNull()?.definition
+                    ?: wiki?.extract?.take(200),
+                contextSentence = contextSentence,
+                bookId = ready?.book?.id,
+                bookTitle = ready?.content?.title ?: ready?.book?.title
+            )
         }
     }
 

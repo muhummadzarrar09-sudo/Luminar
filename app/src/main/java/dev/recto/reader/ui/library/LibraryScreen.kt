@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -33,7 +34,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -48,6 +52,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -62,12 +67,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.launch
 import dev.recto.reader.R
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items as listItems
 import dev.recto.reader.ui.reader.SearchHitRow
 import androidx.compose.ui.platform.LocalContext
+import dev.recto.reader.data.backup.Backup
+import dev.recto.reader.data.backup.BackupResult
 import dev.recto.reader.data.BookFormat
 import dev.recto.reader.data.db.BookEntity
 
@@ -845,14 +853,22 @@ private fun HabitsSheet(vm: LibraryViewModel, onDismiss: () -> Unit) {
         onDismissRequest = onDismiss,
         sheetState = sheetState
     ) {
+        // The backup section pushed this past a phone screen, so it scrolls.
+        //
+        // Order is load-bearing: weight(fill = false) MUST come before
+        // verticalScroll. The other way round the Column is measured with
+        // unbounded height, decides it fits, and never scrolls - the content
+        // below the fold is simply unreachable.
         Column(
             Modifier
                 .fillMaxWidth()
+                .weight(1f, fill = false)
+                .verticalScroll(rememberScrollState())
                 .navigationBarsPadding()
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 24.dp)
         ) {
-            Text("Goals and reminders", style = MaterialTheme.typography.titleLarge)
+            Text("Goals, reminders and backup", style = MaterialTheme.typography.titleLarge)
 
             Spacer(Modifier.height(18.dp))
 
@@ -928,6 +944,123 @@ private fun HabitsSheet(vm: LibraryViewModel, onDismiss: () -> Unit) {
                     }
                 }
             }
+
+            Spacer(Modifier.height(24.dp))
+            HorizontalDivider(
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+            )
+            Spacer(Modifier.height(20.dp))
+
+            BackupSection()
         }
     }
+}
+
+/**
+ * Backup and restore.
+ *
+ * Lives inside the goals sheet rather than in a settings screen of its own,
+ * because Recto does not have one and adding a whole screen for two buttons
+ * is worse than one more section here. The 20dp rhythm and label styling
+ * match the sections above it.
+ */
+@Composable
+private fun BackupSection() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var busy by remember { mutableStateOf(false) }
+    var result by remember { mutableStateOf<String?>(null) }
+
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(Backup.MIME)
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        busy = true
+        scope.launch {
+            result = describe(Backup.export(context, uri))
+            busy = false
+        }
+    }
+
+    // Not CreateDocument's sibling OpenDocument("application/json") alone -
+    // some file managers hand back a backup typed as text/plain or
+    // application/octet-stream, and filtering strictly makes the file
+    // un-pickable. We validate by parsing instead.
+    val restoreLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        busy = true
+        scope.launch {
+            // No manual refresh: restore writes through Room, and every
+            // list on screen is backed by a Room Flow, so the library and
+            // its progress bars re-emit on their own.
+            result = describe(Backup.restore(context, uri))
+            busy = false
+        }
+    }
+
+    Text("Backup", style = MaterialTheme.typography.titleMedium)
+    Spacer(Modifier.height(6.dp))
+    Text(
+        text = "Saves your highlights, notes, bookmarks, vocabulary and " +
+            "reading positions to a file. Not the books themselves - those " +
+            "would be gigabytes. Re-add your books first, then restore.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+
+    Spacer(Modifier.height(14.dp))
+
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Button(
+            onClick = { exportLauncher.launch(Backup.suggestedFileName()) },
+            enabled = !busy
+        ) { Text("Back up") }
+
+        OutlinedButton(
+            onClick = { restoreLauncher.launch(arrayOf("*/*")) },
+            enabled = !busy
+        ) { Text("Restore") }
+    }
+
+    result?.let {
+        Spacer(Modifier.height(12.dp))
+        Text(
+            text = it,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+/** Plain-language outcome, including what did NOT happen and why. */
+private fun describe(result: BackupResult): String = when (result) {
+    is BackupResult.Exported ->
+        "Saved ${result.annotations} highlights and notes from " +
+            "${result.books} books, plus ${result.words} words."
+
+    is BackupResult.Restored -> buildString {
+        append("Restored ${result.annotations} highlights and notes")
+        if (result.words > 0) append(", ${result.words} words")
+        append(".")
+        if (result.skipped > 0) {
+            append(" Skipped ${result.skipped} already present or unmatched.")
+        }
+        if (result.missingBooks.isNotEmpty()) {
+            append(
+                " These books are not in your library yet, so their notes " +
+                    "were left in the file: " +
+                    result.missingBooks.take(3).joinToString(", ") +
+                    if (result.missingBooks.size > 3) {
+                        " and ${result.missingBooks.size - 3} more"
+                    } else {
+                        ""
+                    } +
+                    ". Add them and restore again."
+            )
+        }
+    }
+
+    is BackupResult.Failed -> result.message
 }

@@ -2,6 +2,7 @@ package dev.recto.reader.data.lookup
 
 import dev.recto.reader.data.db.LookupCacheEntity
 import dev.recto.reader.data.db.LookupDao
+import dev.recto.reader.data.db.RecentLookupEntity
 import dev.recto.reader.data.db.VocabularyEntity
 import kotlinx.coroutines.flow.Flow
 
@@ -123,6 +124,47 @@ class LookupRepository(private val dao: LookupDao) {
     }
 
     suspend fun deleteWord(id: Long) = dao.delete(id)
+
+    // --- recent lookups ---
+
+    fun observeRecentLookups(): Flow<List<RecentLookupEntity>> = dao.observeRecentLookups()
+
+    /**
+     * Records that a term was looked up.
+     *
+     * Called after the panes settle rather than when the card opens, so the
+     * stored summary is the definition we actually found. The unique index on
+     * `term` means a repeat moves the entry to the top instead of duplicating
+     * it, and the trim keeps the table bounded.
+     */
+    suspend fun recordLookup(
+        term: String,
+        summary: String?,
+        contextSentence: String?,
+        bookId: Long?,
+        bookTitle: String?
+    ) {
+        val key = term.trim()
+        if (key.isEmpty()) return
+        dao.recordLookup(
+            RecentLookupEntity(
+                // Carry the existing row's id so REPLACE updates it in place.
+                // Without this the insert gets a fresh id, and any UI keyed
+                // on id sees a brand new item rather than a moved one.
+                id = dao.recentIdFor(key) ?: 0,
+                term = key,
+                summary = summary?.takeIf { it.isNotBlank() },
+                contextSentence = contextSentence,
+                bookId = bookId,
+                bookTitle = bookTitle
+            )
+        )
+        dao.trimRecent()
+    }
+
+    suspend fun deleteRecent(id: Long) = dao.deleteRecent(id)
+
+    suspend fun clearRecent() = dao.clearRecent()
 }
 
 /** Raw HTTP outcome, so the repository can cache the body before parsing. */

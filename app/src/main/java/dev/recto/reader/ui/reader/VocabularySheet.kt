@@ -22,6 +22,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -37,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.recto.reader.data.db.RecentLookupEntity
 import dev.recto.reader.data.db.VocabularyEntity
 import dev.recto.reader.data.lookup.Recall
 import dev.recto.reader.data.lookup.Sm2
@@ -54,13 +57,23 @@ fun VocabularySheet(
     words: List<VocabularyEntity>,
     dueCount: Int,
     reviewQueue: List<VocabularyEntity>,
+    recent: List<RecentLookupEntity>,
     onStartReview: () -> Unit,
     onAnswer: (VocabularyEntity, Recall) -> Unit,
     onDelete: (Long) -> Unit,
+    onLookUpAgain: (String) -> Unit,
+    onDeleteRecent: (Long) -> Unit,
+    onClearRecent: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var reviewing by remember { mutableStateOf(false) }
+
+    // Recents live here rather than in a sheet of their own. They are the
+    // same question as saved words - "that thing I looked up" - and a
+    // seventh entry in the overflow menu for a list you glance at is a worse
+    // trade than one tab.
+    var tab by remember { mutableStateOf(0) }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(
@@ -87,7 +100,7 @@ fun VocabularySheet(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                if (dueCount > 0 && !reviewing) {
+                if (tab == 0 && dueCount > 0 && !reviewing) {
                     Button(onClick = {
                         onStartReview()
                         reviewing = true
@@ -96,6 +109,28 @@ fun VocabularySheet(
                 if (reviewing) {
                     TextButton(onClick = { reviewing = false }) { Text("Done") }
                 }
+                if (tab == 1 && recent.isNotEmpty() && !reviewing) {
+                    TextButton(onClick = onClearRecent) { Text("Clear") }
+                }
+            }
+
+            // Hidden during a review: the tabs would offer a way out that
+            // silently abandons the card on screen, and "Done" already does
+            // that deliberately.
+            if (!reviewing) {
+                TabRow(selectedTabIndex = tab) {
+                    Tab(
+                        selected = tab == 0,
+                        onClick = { tab = 0 },
+                        text = { Text("Saved") }
+                    )
+                    Tab(
+                        selected = tab == 1,
+                        onClick = { tab = 1 },
+                        text = { Text("Recent") }
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
             }
 
             if (reviewing) {
@@ -104,17 +139,29 @@ fun VocabularySheet(
                     onAnswer = onAnswer,
                     onFinished = { reviewing = false }
                 )
-            } else if (words.isEmpty()) {
-                Text(
-                    text = "Long-press a word while reading, then tap Save on the " +
-                        "definition card. Saved words become flashcards.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
-                )
+            } else if (tab == 0) {
+                if (words.isEmpty()) {
+                    EmptyNote(
+                        "Long-press a word while reading, then tap Save on the " +
+                            "definition card. Saved words become flashcards."
+                    )
+                } else {
+                    LazyColumn(Modifier.heightIn(max = 420.dp)) {
+                        items(words, key = { it.id }) { w -> WordRow(w, onDelete) }
+                    }
+                }
             } else {
-                LazyColumn(Modifier.heightIn(max = 420.dp)) {
-                    items(words, key = { it.id }) { w -> WordRow(w, onDelete) }
+                if (recent.isEmpty()) {
+                    EmptyNote(
+                        "Words and phrases you look up appear here, so you can " +
+                            "get back to one without finding the page again."
+                    )
+                } else {
+                    LazyColumn(Modifier.heightIn(max = 420.dp)) {
+                        items(recent, key = { it.id }) { r ->
+                            RecentRow(r, onLookUpAgain, onDeleteRecent)
+                        }
+                    }
                 }
             }
         }
@@ -272,6 +319,106 @@ private fun ReviewPane(
                 }
             }
         }
+    }
+}
+
+/** Placeholder text for an empty tab, at the list's own margins. */
+@Composable
+private fun EmptyNote(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
+    )
+}
+
+/**
+ * One past lookup. Tapping it opens the card again.
+ *
+ * Same 20dp/10dp rhythm and hairline rule as [WordRow], so the two tabs feel
+ * like one list with different contents rather than two screens.
+ */
+@Composable
+private fun RecentRow(
+    entry: RecentLookupEntity,
+    onLookUpAgain: (String) -> Unit,
+    onDelete: (Long) -> Unit
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            // The whole row is the target, not just the word: a 12dp-tall
+            // word is a poor thing to ask someone to hit on a moving bus.
+            .clickable { onLookUpAgain(entry.term) }
+            .padding(horizontal = 20.dp, vertical = 10.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = entry.term,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            Text(
+                text = relativeTime(entry.lookedUpAt),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            TextButton(onClick = { onDelete(entry.id) }) {
+                Text("Remove", color = MaterialTheme.colorScheme.error)
+            }
+        }
+
+        entry.summary?.let {
+            Text(
+                text = it,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+
+        entry.bookTitle?.let {
+            Text(
+                text = "from $it",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        Spacer(Modifier.height(6.dp))
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+        )
+    }
+}
+
+/**
+ * "2h ago", not a timestamp.
+ *
+ * The only question this answers is "was that just now or a while back?", so
+ * a coarse bucket beats a date. Anything older than a week falls back to a
+ * day count rather than pulling in date formatting for a caption.
+ */
+private fun relativeTime(millis: Long): String {
+    val delta = System.currentTimeMillis() - millis
+    if (delta < 0) return "just now"
+    val minutes = delta / 60_000
+    val hours = minutes / 60
+    val days = hours / 24
+    return when {
+        minutes < 1 -> "just now"
+        minutes < 60 -> "${minutes}m ago"
+        hours < 24 -> "${hours}h ago"
+        days < 7 -> "${days}d ago"
+        else -> "${days / 7}w ago"
     }
 }
 

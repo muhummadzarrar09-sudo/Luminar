@@ -15,9 +15,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         AnnotationEntity::class,
         LookupCacheEntity::class,
         VocabularyEntity::class,
-        ReadingSessionEntity::class
+        ReadingSessionEntity::class,
+        RecentLookupEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = true
 )
 abstract class RectoDatabase : RoomDatabase() {
@@ -262,6 +263,39 @@ abstract class RectoDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v7 -> v8: recent lookups.
+         *
+         * A history rather than a cache, so it is a new table instead of a
+         * column on lookup_cache - the cache is swept by age and that would
+         * delete exactly the entries a reader wants to find again.
+         */
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `recent_lookups` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `term` TEXT NOT NULL,
+                        `summary` TEXT,
+                        `contextSentence` TEXT,
+                        `bookId` INTEGER,
+                        `bookTitle` TEXT,
+                        `lookedUpAt` INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_recent_lookups_term` " +
+                        "ON `recent_lookups` (`term`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_recent_lookups_lookedUpAt` " +
+                        "ON `recent_lookups` (`lookedUpAt`)"
+                )
+            }
+        }
+
         @Volatile
         private var instance: RectoDatabase? = null
 
@@ -274,7 +308,8 @@ abstract class RectoDatabase : RoomDatabase() {
                 )
                     .addMigrations(
                         MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4,
-                        MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7
+                        MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
+                        MIGRATION_7_8
                     )
                     // No setForeignKeyConstraintsEnabled call here: that is
                     // not a RoomDatabase.Builder method, it belongs to

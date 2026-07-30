@@ -81,6 +81,43 @@ data class VocabularyEntity(
     val timesCorrect: Int = 0
 )
 
+/**
+ * A word or phrase you looked up, most recent first.
+ *
+ * Separate from [LookupCacheEntity] even though both are keyed by term,
+ * because they answer different questions. The cache asks "do we already
+ * have the API response for this?" and is swept on age. This asks "what did
+ * I look up?" and is a history the reader owns - sweeping it because a
+ * definition got old would delete the thing they wanted to find again.
+ *
+ * The term is unique: looking a word up twice moves it to the top rather
+ * than filling the list with repeats.
+ */
+@Entity(
+    tableName = "recent_lookups",
+    indices = [
+        Index(value = ["term"], unique = true),
+        Index(value = ["lookedUpAt"])
+    ]
+)
+data class RecentLookupEntity(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+
+    val term: String,
+
+    /** Whatever we managed to show, so the list reads without the network. */
+    val summary: String? = null,
+
+    /** The sentence it came from, when there was one. */
+    val contextSentence: String? = null,
+
+    val bookId: Long? = null,
+    val bookTitle: String? = null,
+
+    val lookedUpAt: Long = System.currentTimeMillis()
+)
+
 @Dao
 interface LookupDao {
 
@@ -108,6 +145,10 @@ interface LookupDao {
 
     @Query("SELECT * FROM vocabulary WHERE word = :word LIMIT 1")
     suspend fun byWord(word: String): VocabularyEntity?
+
+    /** Snapshot for backup. */
+    @Query("SELECT * FROM vocabulary ORDER BY addedAt ASC")
+    suspend fun allVocabularyOnce(): List<VocabularyEntity>
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun save(entity: VocabularyEntity): Long
@@ -137,4 +178,40 @@ interface LookupDao {
 
     @Query("DELETE FROM vocabulary WHERE id = :id")
     suspend fun delete(id: Long)
+
+    // --- recent lookups ---
+
+    @Query("SELECT * FROM recent_lookups ORDER BY lookedUpAt DESC LIMIT :limit")
+    fun observeRecentLookups(limit: Int = 50): Flow<List<RecentLookupEntity>>
+
+    /**
+     * REPLACE, so looking the same word up again moves it to the top instead
+     * of adding a duplicate - the unique index on `term` turns the second
+     * insert into an update.
+     */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun recordLookup(entry: RecentLookupEntity)
+
+    @Query("SELECT id FROM recent_lookups WHERE term = :term LIMIT 1")
+    suspend fun recentIdFor(term: String): Long?
+
+    @Query("DELETE FROM recent_lookups WHERE id = :id")
+    suspend fun deleteRecent(id: Long)
+
+    @Query("DELETE FROM recent_lookups")
+    suspend fun clearRecent()
+
+    /**
+     * Keeps the history bounded. Without this it grows for the life of the
+     * install; 200 is far more than anyone scrolls back through.
+     */
+    @Query(
+        """
+        DELETE FROM recent_lookups
+        WHERE id NOT IN (
+            SELECT id FROM recent_lookups ORDER BY lookedUpAt DESC LIMIT :keep
+        )
+        """
+    )
+    suspend fun trimRecent(keep: Int = 200)
 }

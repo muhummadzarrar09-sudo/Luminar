@@ -110,6 +110,18 @@ interface AnnotationDao {
     @Query("SELECT * FROM annotations WHERE id = :id LIMIT 1")
     suspend fun byId(id: Long): AnnotationEntity?
 
+    /** Snapshot of everything, for backup. */
+    @Query("SELECT * FROM annotations ORDER BY bookId ASC, startChar ASC")
+    suspend fun allOnce(): List<AnnotationEntity>
+
+    /**
+     * One book's annotations, once. Restore reads these to skip duplicates,
+     * and doing it per book rather than per annotation is the difference
+     * between one query and five hundred.
+     */
+    @Query("SELECT * FROM annotations WHERE bookId = :bookId")
+    suspend fun forBookOnce(bookId: Long): List<AnnotationEntity>
+
     /**
      * Anything overlapping the given range. Used to spot an existing highlight
      * under a fresh selection, so re-selecting the same words edits rather

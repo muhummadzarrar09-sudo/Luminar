@@ -56,4 +56,8 @@ interface BookDao {
 
     @Query("SELECT COUNT(*) FROM books")
     suspend fun count(): Int
+
+    /** Snapshot for backup. A Flow would never complete. */
+    @Query("SELECT * FROM books ORDER BY id ASC")
+    suspend fun allOnce(): List<BookEntity>
 }

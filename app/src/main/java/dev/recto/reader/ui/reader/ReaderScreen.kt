@@ -288,13 +288,23 @@ fun ReaderScreen(
             val vocabulary by vm.vocabulary.collectAsStateWithLifecycle()
             val dueCount by vm.dueCount.collectAsStateWithLifecycle()
             val reviewQueue by vm.reviewQueue.collectAsStateWithLifecycle()
+            val recent by vm.recentLookups.collectAsStateWithLifecycle()
             VocabularySheet(
                 words = vocabulary,
                 dueCount = dueCount,
                 reviewQueue = reviewQueue,
+                recent = recent,
                 onStartReview = vm::startReview,
                 onAnswer = vm::answerCard,
                 onDelete = vm::deleteVocabulary,
+                onLookUpAgain = { term ->
+                    // Close the sheet first, or the lookup card opens behind
+                    // it and looks like nothing happened.
+                    vm.dismissSheet()
+                    vm.lookUp(term)
+                },
+                onDeleteRecent = vm::deleteRecentLookup,
+                onClearRecent = vm::clearRecentLookups,
                 onDismiss = vm::dismissSheet
             )
         }
@@ -1089,11 +1099,21 @@ private fun PageSurface(
                                         dragged = true
                                         val off = l.getOffsetForPosition(change.position)
                                             .coerceIn(0, page.text.length)
-                                        val from = minOf(anchor, off)
-                                        val to = maxOf(anchor, off)
-                                        if (to > from) {
+
+                                        // Snap to words, then to sentences
+                                        // once the drag leaves the sentence
+                                        // it started in. Raw character
+                                        // offsets meant every long selection
+                                        // ended mid-word and needed nudging.
+                                        val range = PageText.dragSelection(
+                                            text = page.text,
+                                            anchor = anchor,
+                                            cursor = off
+                                        )
+                                        if (!range.isEmpty()) {
                                             onSelectionChange(
-                                                (pageStart + from)..(pageStart + to)
+                                                (pageStart + range.first)..
+                                                    (pageStart + range.last + 1)
                                             )
                                         }
                                     },
