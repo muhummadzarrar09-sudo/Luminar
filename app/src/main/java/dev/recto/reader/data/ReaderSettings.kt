@@ -186,10 +186,32 @@ data class ReaderSettings(
      * if you always highlight in blue, you should not have to aim for blue
      * every single time.
      */
-    val defaultHighlightColour: Int = 0
+    val defaultHighlightColour: Int = 0,
+
+    // --- read aloud ---
+
+    /**
+     * Speech rate multiplier. 1.0 is the engine's natural pace; most people
+     * settle around 1.4-1.8 once they are used to it.
+     */
+    val ttsSpeed: Float = 1.0f,
+
+    /** Voice pitch. 1.0 is natural; the range is kept narrow on purpose. */
+    val ttsPitch: Float = 1.0f,
+
+    /** Engine voice name, or null to use whatever the engine defaults to. */
+    val ttsVoiceId: String? = null,
+
+    /** Minutes for the sleep timer, 0 for off. Remembered between sessions. */
+    val ttsSleepMinutes: Int = 0
 ) {
     companion object {
         const val MIN_FONT_SP = 12
         const val MAX_FONT_SP = 32
+
+        const val MIN_TTS_SPEED = 0.5f
+        const val MAX_TTS_SPEED = 3.0f
+        const val MIN_TTS_PITCH = 0.7f
+        const val MAX_TTS_PITCH = 1.4f
     }
 }

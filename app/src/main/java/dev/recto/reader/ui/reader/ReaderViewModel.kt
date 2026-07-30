@@ -25,6 +25,14 @@ import dev.recto.reader.data.search.SearchHit
 import dev.recto.reader.data.search.TextSearch
 import dev.recto.reader.data.stats.ReadingStats
 import dev.recto.reader.data.stats.SessionTracker
+import dev.recto.reader.data.tts.SpeechEngine
+import dev.recto.reader.data.tts.SystemSpeechEngine
+import dev.recto.reader.data.tts.Utterance
+import dev.recto.reader.data.tts.Utterances
+import dev.recto.reader.data.tts.VoiceOption
+import dev.recto.reader.tts.ReadAloudBus
+import dev.recto.reader.tts.ReadAloudCommand
+import dev.recto.reader.tts.ReadAloudService
 import dev.recto.reader.data.db.BookEntity
 import dev.recto.reader.data.db.RectoDatabase
 import kotlinx.coroutines.Dispatchers
@@ -53,7 +61,7 @@ sealed interface ReaderState {
 }
 
 /** Which overlay, if any, is showing over the page. */
-enum class ReaderSheet { NONE, SETTINGS, CONTENTS, NOTEBOOK, VOCABULARY, SEARCH }
+enum class ReaderSheet { NONE, SETTINGS, CONTENTS, NOTEBOOK, VOCABULARY, SEARCH, READ_ALOUD }
 
 /**
  * Something that just happened and can be taken back.
@@ -1000,6 +1008,307 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         val offsets = chapterOffsets(content)
         val base = offsets.getOrElse(page.chapterIndex) { 0 }
         return base + page.startChar
+    }
+
+    // ------------------------------------------------------------------
+    // Read aloud
+    // ------------------------------------------------------------------
+
+    private val speech: SpeechEngine = SystemSpeechEngine(app)
+
+    private val _speaking = MutableStateFlow(false)
+    val speaking: StateFlow<Boolean> = _speaking.asStateFlow()
+
+    /**
+     * Absolute range currently being spoken, for the on-page highlight.
+     * Narrows to the exact words when the engine reports ranges, otherwise
+     * stays at sentence granularity.
+     */
+    private val _spokenRange = MutableStateFlow<IntRange?>(null)
+    val spokenRange: StateFlow<IntRange?> = _spokenRange.asStateFlow()
+
+    private val _voices = MutableStateFlow<List<VoiceOption>>(emptyList())
+    val voices: StateFlow<List<VoiceOption>> = _voices.asStateFlow()
+
+    private val _speechError = MutableStateFlow<String?>(null)
+    val speechError: StateFlow<String?> = _speechError.asStateFlow()
+
+    /** Minutes remaining on the sleep timer, or null when it is off. */
+    private val _sleepRemaining = MutableStateFlow<Int?>(null)
+    val sleepRemaining: StateFlow<Int?> = _sleepRemaining.asStateFlow()
+
+    init {
+        // Lock-screen and notification buttons arrive here. Routing them
+        // through the same functions the UI calls means there is one
+        // playback code path, not two that can drift apart.
+        viewModelScope.launch {
+            ReadAloudBus.commands.collect { command ->
+                when (command) {
+                    ReadAloudCommand.TOGGLE -> toggleSpeaking()
+                    ReadAloudCommand.NEXT -> skipSentence(true)
+                    ReadAloudCommand.PREVIOUS -> skipSentence(false)
+                    ReadAloudCommand.STOP -> stopSpeaking()
+                }
+            }
+        }
+    }
+
+    private var queue: List<Utterance> = emptyList()
+    private var queueIndex = 0
+    private var speechJob: Job? = null
+    private var sleepJob: Job? = null
+
+    /**
+     * Bumped every time playback starts or is retargeted.
+     *
+     * Engine callbacks arrive on their own thread and can land AFTER the
+     * session they belong to has been stopped. Checking only `speaking`
+     * is not enough: stop, then start somewhere else, and a late onDone from
+     * the old chain advances the NEW queue, silently skipping a sentence.
+     * Simulated it - without this guard the second session loses its first
+     * sentence. Each callback carries the generation it was issued under and
+     * is ignored if that has moved on.
+     */
+    private var speechGeneration = 0
+
+    /**
+     * Starts reading aloud from [fromChar], or from the top of the page.
+     *
+     * The queue is built for the WHOLE BOOK from that point, not just the
+     * page. Rebuilding at each page boundary would stutter, and the queue is
+     * cheap - it is offsets into text already in memory.
+     */
+    fun startSpeaking(fromChar: Int? = null) {
+        val ready = _state.value as? ReaderState.Ready ?: return
+        _speechError.value = null
+
+        speechJob?.cancel()
+        speechJob = viewModelScope.launch {
+            if (!speech.isReady && !speech.prepare()) {
+                _speechError.value =
+                    "No text-to-speech engine is installed. Install one, then " +
+                        "pick it in Android settings under Accessibility."
+                return@launch
+            }
+
+            _voices.value = speech.voices(java.util.Locale.getDefault())
+            speech.selectVoice(settings.value.ttsVoiceId)
+
+            val start = fromChar ?: pageStartChar()
+            val whole = wholeText(ready)
+            queue = Utterances.split(whole).filter { it.end > start }
+            queueIndex = 0
+
+            if (queue.isEmpty()) {
+                _speechError.value = "Nothing left to read in this book"
+                return@launch
+            }
+
+            _speaking.value = true
+            speechGeneration++
+
+            // Start the foreground service ONCE, here, while the app is
+            // definitely in the foreground - Android 12+ rejects a
+            // background start. Per-sentence updates go straight to the
+            // notification manager instead.
+            val ready2 = _state.value as? ReaderState.Ready
+            ReadAloudService.start(
+                context = getApplication(),
+                title = ready2?.content?.title ?: ready2?.book?.title ?: "Recto",
+                line = queue.firstOrNull()?.text?.take(90).orEmpty()
+            )
+
+            speakCurrent(speechGeneration)
+        }
+    }
+
+    private fun speakCurrent(generation: Int) {
+        if (generation != speechGeneration) return
+
+        val current = queue.getOrNull(queueIndex)
+        if (current == null) {
+            stopSpeaking()
+            return
+        }
+
+        _spokenRange.value = current.start until current.end
+        updateNotification(current)
+
+        // Follow the voice. If the sentence being read is not on the page in
+        // front of you, turn to it - that is the whole point of read-aloud
+        // continuing past a page break.
+        val target = pageForChar(current.start)
+        if (target != _pageIndex.value) {
+            _pageIndex.value = target
+            scheduleSave()
+        }
+
+        speech.speak(
+            utterance = current,
+            speed = settings.value.ttsSpeed,
+            pitch = settings.value.ttsPitch,
+            onRange = { from, to ->
+                if (generation != speechGeneration) return@speak
+                // Engine offsets are relative to the SPOKEN string, which
+                // forSpeech may have shortened. Clamp into the utterance so a
+                // mismatch can never highlight past its end.
+                val s = (current.start + from).coerceIn(current.start, current.end)
+                val e = (current.start + to).coerceIn(s, current.end)
+                _spokenRange.value = s until e
+            },
+            onDone = {
+                // Hop back onto the ViewModel scope: these callbacks arrive
+                // on an engine thread, and everything below touches state
+                // that drives the UI.
+                viewModelScope.launch {
+                    if (generation != speechGeneration) return@launch
+                    if (!_speaking.value) return@launch
+                    queueIndex++
+                    speakCurrent(generation)
+                }
+            },
+            onError = { message ->
+                viewModelScope.launch {
+                    if (generation != speechGeneration) return@launch
+                    _speechError.value = message
+                    stopSpeaking()
+                }
+            }
+        )
+    }
+
+    private fun updateNotification(current: Utterance) {
+        val ready = _state.value as? ReaderState.Ready ?: return
+        ReadAloudService.refresh(
+            context = getApplication(),
+            title = ready.content.title ?: ready.book.title,
+            // The sentence being read, trimmed - a whole paragraph in a
+            // notification is unreadable at a glance.
+            line = current.text.take(90),
+            playing = true
+        )
+    }
+
+    fun stopSpeaking() {
+        // Invalidate first, so any callback already in flight is a no-op by
+        // the time it lands.
+        speechGeneration++
+        speechJob?.cancel()
+        speechJob = null
+        speech.stop()
+        _speaking.value = false
+        _spokenRange.value = null
+        cancelSleepTimer()
+        ReadAloudService.stop(getApplication())
+
+        // Leave the reading position where the voice got to, so closing the
+        // book after listening resumes in the right place.
+        queue.getOrNull(queueIndex)?.let { rememberChar(it.start) }
+    }
+
+    fun toggleSpeaking() {
+        if (_speaking.value) stopSpeaking() else startSpeaking()
+    }
+
+    /** Skips to the next or previous sentence without stopping. */
+    fun skipSentence(forward: Boolean) {
+        if (!_speaking.value) return
+        val next = (queueIndex + if (forward) 1 else -1)
+            .coerceIn(0, (queue.size - 1).coerceAtLeast(0))
+        if (next == queueIndex) return
+        queueIndex = next
+        speech.stop()
+        // New generation: speech.stop() makes the engine fire onDone for the
+        // utterance we just abandoned, and without this that callback would
+        // advance the index a second time and skip a sentence.
+        speechGeneration++
+        speakCurrent(speechGeneration)
+    }
+
+    fun setTtsSpeed(value: Float) = viewModelScope.launch {
+        settingsRepo.setTtsSpeed(value)
+        // Rate is applied per utterance, so restart the current one for the
+        // change to be audible immediately rather than at the next sentence.
+        if (_speaking.value) {
+            speech.stop()
+            speechGeneration++
+            speakCurrent(speechGeneration)
+        }
+    }
+
+    fun setTtsPitch(value: Float) = viewModelScope.launch { settingsRepo.setTtsPitch(value) }
+
+    fun setTtsVoice(id: String?) = viewModelScope.launch {
+        settingsRepo.setTtsVoice(id)
+        speech.selectVoice(id)
+        if (_speaking.value) {
+            speech.stop()
+            speechGeneration++
+            speakCurrent(speechGeneration)
+        }
+    }
+
+    fun dismissSpeechError() {
+        _speechError.value = null
+    }
+
+    /**
+     * Stops the voice after [minutes].
+     *
+     * Ticks once a minute rather than sleeping for the whole duration, so the
+     * remaining time can be shown - a timer you cannot see is a timer you do
+     * not trust when you are falling asleep.
+     */
+    fun startSleepTimer(minutes: Int) {
+        cancelSleepTimer()
+        if (minutes <= 0) return
+
+        sleepJob = viewModelScope.launch {
+            var left = minutes
+            _sleepRemaining.value = left
+            while (left > 0) {
+                delay(60_000)
+                left--
+                _sleepRemaining.value = left
+            }
+            stopSpeaking()
+        }
+    }
+
+    /** Remembers the choice and applies it, so 0 also means "cancel". */
+    fun applySleepTimer(minutes: Int) {
+        viewModelScope.launch { settingsRepo.setTtsSleepMinutes(minutes) }
+        if (minutes <= 0) cancelSleepTimer() else startSleepTimer(minutes)
+    }
+
+    fun cancelSleepTimer() {
+        sleepJob?.cancel()
+        sleepJob = null
+        _sleepRemaining.value = null
+    }
+
+    /** The book as one string, matching the offsets used everywhere else. */
+    private fun wholeText(ready: ReaderState.Ready): String =
+        ready.content.chapters.joinToString("") { it.text }
+
+    private fun pageForChar(target: Int): Int {
+        val ready = _state.value as? ReaderState.Ready ?: return _pageIndex.value
+        val pages = ready.pages ?: return _pageIndex.value
+        return pageForGlobalChar(pages, ready.content, target)
+    }
+
+    private fun rememberChar(target: Int) {
+        pendingRestoreChar = target
+        scheduleSave()
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        speech.shutdown()
+        // The service outlives the ViewModel by design, but if the ViewModel
+        // is going away the reader is gone, so the notification would be a
+        // control panel for nothing.
+        ReadAloudService.stop(getApplication())
     }
 
     private fun pageForGlobalChar(pages: List<Page>, content: EpubBook, target: Int): Int {

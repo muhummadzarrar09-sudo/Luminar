@@ -309,6 +309,33 @@ fun ReaderScreen(
             )
         }
 
+        ReaderSheet.READ_ALOUD -> {
+            val speaking by vm.speaking.collectAsStateWithLifecycle()
+            val voices by vm.voices.collectAsStateWithLifecycle()
+            val sleepLeft by vm.sleepRemaining.collectAsStateWithLifecycle()
+            val speechError by vm.speechError.collectAsStateWithLifecycle()
+            val readerSettings by vm.settings.collectAsStateWithLifecycle()
+
+            ReadAloudSheet(
+                speaking = speaking,
+                settings = readerSettings,
+                voices = voices,
+                sleepRemaining = sleepLeft,
+                error = speechError,
+                onToggle = vm::toggleSpeaking,
+                onSkip = vm::skipSentence,
+                onSpeed = vm::setTtsSpeed,
+                onPitch = vm::setTtsPitch,
+                onVoice = vm::setTtsVoice,
+                onSleep = vm::applySleepTimer,
+                onDismissError = vm::dismissSpeechError,
+                // Dismissing the sheet leaves the voice running on purpose:
+                // you close it to see the page it is reading. The menu and
+                // the notification both stop it.
+                onDismiss = vm::dismissSheet
+            )
+        }
+
         ReaderSheet.NONE -> Unit
     }
 
@@ -354,6 +381,8 @@ private fun ReaderContent(
     val measurer = rememberTextMeasurer()
 
     val undo by vm.undo.collectAsStateWithLifecycle()
+    val speaking by vm.speaking.collectAsStateWithLifecycle()
+    val spokenRange by vm.spokenRange.collectAsStateWithLifecycle()
 
     // Derived from settings, so any typography change produces a new style
     // object and therefore a re-pagination.
@@ -521,6 +550,7 @@ private fun ReaderContent(
                 horizontalPadding = horizontalPadding,
                 annotations = annotations,
                 selection = selection,
+                spokenRange = spokenRange,
                 darkTheme = settings.theme.isDark,
                 onSelectionChange = vm::setSelection,
                 onSelectionBounds = { selectionBounds = it },
@@ -748,6 +778,20 @@ private fun ReaderContent(
                                     vm.showSheet(ReaderSheet.VOCABULARY)
                                 }
                             )
+                            DropdownMenuItem(
+                                text = {
+                                    Text(if (speaking) "Stop reading" else "Read aloud")
+                                },
+                                onClick = {
+                                    menuOpen = false
+                                    if (speaking) {
+                                        vm.stopSpeaking()
+                                    } else {
+                                        vm.showSheet(ReaderSheet.READ_ALOUD)
+                                        vm.startSpeaking()
+                                    }
+                                }
+                            )
                         }
                     }
                 }
@@ -892,6 +936,8 @@ private fun PageSurface(
     horizontalPadding: androidx.compose.ui.unit.Dp,
     annotations: List<dev.recto.reader.data.db.AnnotationEntity>,
     selection: IntRange?,
+    /** Absolute range being read aloud, highlighted as the voice moves. */
+    spokenRange: IntRange?,
     darkTheme: Boolean,
     onSelectionChange: (IntRange?) -> Unit,
     /** Reports where the selection sits, in window pixels. */
@@ -1056,7 +1102,9 @@ private fun PageSurface(
                             annotations = annotations,
                             selection = selection,
                             darkTheme = darkTheme,
-                            selectionColour = selectionTint(style.color)
+                            selectionColour = selectionTint(style.color),
+                            spoken = spokenRange,
+                            spokenColour = spokenTint(style.color)
                         ),
                         style = style,
                         onTextLayout = { layoutRef.value = it },

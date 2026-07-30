@@ -46,6 +46,10 @@ class SettingsRepository(private val context: Context) {
         val reminderMinute = intPreferencesKey("reminder_minute")
         val streakAlerts = booleanPreferencesKey("streak_alerts")
         val defaultHighlight = intPreferencesKey("default_highlight_colour")
+        val ttsSpeed = floatPreferencesKey("tts_speed")
+        val ttsPitch = floatPreferencesKey("tts_pitch")
+        val ttsVoice = stringPreferencesKey("tts_voice")
+        val ttsSleep = intPreferencesKey("tts_sleep_minutes")
     }
 
     val settings: Flow<ReaderSettings> = context.settingsStore.data
@@ -77,7 +81,13 @@ class SettingsRepository(private val context: Context) {
                 // Clamped: a colour was removed once already and an
                 // out-of-range index would crash fromIndex' callers.
                 defaultHighlightColour = (prefs[Keys.defaultHighlight] ?: 0)
-                    .coerceIn(0, HighlightColour.entries.size - 1)
+                    .coerceIn(0, HighlightColour.entries.size - 1),
+                ttsSpeed = (prefs[Keys.ttsSpeed] ?: 1.0f)
+                    .coerceIn(ReaderSettings.MIN_TTS_SPEED, ReaderSettings.MAX_TTS_SPEED),
+                ttsPitch = (prefs[Keys.ttsPitch] ?: 1.0f)
+                    .coerceIn(ReaderSettings.MIN_TTS_PITCH, ReaderSettings.MAX_TTS_PITCH),
+                ttsVoiceId = prefs[Keys.ttsVoice],
+                ttsSleepMinutes = (prefs[Keys.ttsSleep] ?: 0).coerceIn(0, 120)
             )
         }
 
@@ -126,6 +136,24 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setDefaultHighlightColour(index: Int) = edit {
         it[Keys.defaultHighlight] = index.coerceIn(0, HighlightColour.entries.size - 1)
+    }
+
+    suspend fun setTtsSpeed(value: Float) = edit {
+        it[Keys.ttsSpeed] =
+            value.coerceIn(ReaderSettings.MIN_TTS_SPEED, ReaderSettings.MAX_TTS_SPEED)
+    }
+
+    suspend fun setTtsPitch(value: Float) = edit {
+        it[Keys.ttsPitch] =
+            value.coerceIn(ReaderSettings.MIN_TTS_PITCH, ReaderSettings.MAX_TTS_PITCH)
+    }
+
+    suspend fun setTtsVoice(id: String?) = edit {
+        if (id == null) it.remove(Keys.ttsVoice) else it[Keys.ttsVoice] = id
+    }
+
+    suspend fun setTtsSleepMinutes(minutes: Int) = edit {
+        it[Keys.ttsSleep] = minutes.coerceIn(0, 120)
     }
 
     private suspend fun edit(block: (MutablePreferences) -> Unit) {

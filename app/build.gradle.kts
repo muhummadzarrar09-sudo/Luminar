@@ -93,4 +93,9 @@ dependencies {
 
     implementation(libs.datastore.preferences)
     implementation(libs.work.runtime.ktx)
+
+    // MediaStyle notification for read-aloud. androidx.media, NOT media3:
+    // media3 is an ExoPlayer stack we have no use for - there is no media
+    // file here, just a TTS engine - and it is far larger.
+    implementation(libs.androidx.media)
 }

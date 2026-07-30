@@ -522,3 +522,12 @@ fun buildExportText(
 
 /** A tinted overlay colour for the live selection, readable on any theme. */
 fun selectionTint(onSurface: Color): Color = onSurface.copy(alpha = 0.22f)
+
+/**
+ * The band behind the sentence being read aloud.
+ *
+ * Lighter than the selection tint - it is on screen continuously while you
+ * listen, and at selection strength that becomes a flickering grey bar
+ * marching down the page. Just enough to follow with your eye.
+ */
+fun spokenTint(onSurface: Color): Color = onSurface.copy(alpha = 0.11f)

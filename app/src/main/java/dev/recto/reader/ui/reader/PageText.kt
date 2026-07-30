@@ -32,7 +32,10 @@ object PageText {
         annotations: List<AnnotationEntity>,
         selection: IntRange?,
         darkTheme: Boolean,
-        selectionColour: Color
+        selectionColour: Color,
+        /** Absolute range currently being read aloud, or null. */
+        spoken: IntRange? = null,
+        spokenColour: Color = Color.Unspecified
     ): AnnotatedString {
         val pageEnd = pageStart + text.length
 
@@ -66,6 +69,17 @@ object PageText {
                     from,
                     to
                 )
+            }
+
+            // The read-aloud highlight sits under the live selection but
+            // over stored highlights, so following the voice stays legible on
+            // an already-highlighted passage.
+            if (spoken != null && spokenColour != Color.Unspecified) {
+                val from = (spoken.first - pageStart).coerceIn(0, text.length)
+                val to = (spoken.last + 1 - pageStart).coerceIn(0, text.length)
+                if (from < to) {
+                    addStyle(SpanStyle(background = spokenColour), from, to)
+                }
             }
 
             // Live selection paints last so it sits on top of any highlight
