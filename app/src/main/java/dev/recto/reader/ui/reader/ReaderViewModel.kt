@@ -281,13 +281,29 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             _wordSaved.value = lookupRepo.isSaved(clean)
         }
-        viewModelScope.launch {
-            _dictionary.value = lookupRepo.define(clean)
+
+        // A dictionary can only answer single words. Asking it about a
+        // sentence wastes a request and returns a confusing "not found",
+        // so we say plainly that it does not apply instead.
+        if (isWordLike(clean)) {
+            viewModelScope.launch {
+                _dictionary.value = lookupRepo.define(clean)
+            }
+        } else {
+            _dictionary.value = LookupState.Empty(
+                "Dictionaries only define single words. Try Wikipedia or a web " +
+                    "search for a phrase."
+            )
         }
+
         viewModelScope.launch {
             _wikipedia.value = lookupRepo.wikipedia(clean)
         }
     }
+
+    /** Single word, or a short hyphenated/apostrophised one. */
+    private fun isWordLike(text: String): Boolean =
+        text.length <= 40 && !text.trim().contains(Regex("\\s"))
 
     fun retryLookup() {
         _lookupWord.value?.let { lookUp(it, _lookupContext.value) }
@@ -300,30 +316,54 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Looks up whatever is currently selected. */
+    /**
+     * Looks up whatever is selected, however long.
+     *
+     * Phrases are the point here. A dictionary can only answer single words,
+     * but a selected phrase is usually the thing you did NOT understand - a
+     * metaphor, an idiom, a turn of phrase. So a phrase still opens the card:
+     * Wikipedia may well have the idiom, and if nothing does, the card offers
+     * a web search, which is the honest answer for "what does this mean?".
+     *
+     * The dictionary tab is only queried for something word-shaped, so we do
+     * not fire a pointless request for a fourteen-word sentence.
+     */
     fun lookUpSelection() {
-        val text = selectedText()
+        val text = selectedText().trim()
         if (text.isBlank()) return
-        // Only the first word - a dictionary cannot do phrases, and the
-        // Wikipedia tab handles multi-word proper nouns anyway.
-        val first = text.trim().split(Regex("\\s+")).firstOrNull().orEmpty()
-        lookUp(if (text.trim().count { it == ' ' } <= 2) text.trim() else first,
-            contextSentence = sentenceAround(_selection.value?.first ?: 0))
+        lookUp(text, contextSentence = sentenceAround(_selection.value?.first ?: 0))
         _selection.value = null
     }
 
+    /**
+     * Saves the looked-up word OR phrase for study.
+     *
+     * Previously this bailed out unless the dictionary had returned a
+     * definition, which meant phrases - the things you most want to remember -
+     * could never be saved. Now it takes the best meaning available, in order:
+     * a dictionary sense, then the Wikipedia extract, then the sentence you
+     * met it in. Something you selected is always worth keeping.
+     */
     fun saveCurrentWord() {
-        val word = _lookupWord.value ?: return
-        val entry = (_dictionary.value as? LookupState.Success)?.data ?: return
-        val firstPos = entry.entries.firstOrNull() ?: return
-        val definition = firstPos.senses.firstOrNull()?.definition ?: return
+        val term = _lookupWord.value ?: return
         val ready = _state.value as? ReaderState.Ready
+
+        val dict = (_dictionary.value as? LookupState.Success)?.data
+        val firstPos = dict?.entries?.firstOrNull()
+        val wiki = (_wikipedia.value as? LookupState.Success)?.data
+
+        val definition = firstPos?.senses?.firstOrNull()?.definition
+            ?: wiki?.extract?.take(300)
+            ?: _lookupContext.value?.let { "In context: $it" }
+            ?: return
 
         viewModelScope.launch {
             val ok = lookupRepo.saveWord(
-                word = word,
+                word = term,
                 definition = definition,
-                partOfSpeech = firstPos.partOfSpeech,
-                phonetic = entry.phonetic,
+                partOfSpeech = firstPos?.partOfSpeech
+                    ?: if (term.contains(' ')) "phrase" else null,
+                phonetic = dict?.phonetic,
                 contextSentence = _lookupContext.value,
                 bookId = ready?.book?.id,
                 bookTitle = ready?.content?.title ?: ready?.book?.title

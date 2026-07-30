@@ -444,8 +444,8 @@ private fun ReaderContent(
                 onDismiss = vm::clearSelection,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .navigationBarsPadding()
-                    .padding(bottom = 28.dp)
+                    .safeDrawingPadding()
+                    .padding(horizontal = 8.dp, vertical = 12.dp)
             )
         }
 
@@ -649,18 +649,32 @@ private fun PageSurface(
 
     // Layout of the page currently on screen, needed to turn a touch point
     // into a character offset. Set by Text's onTextLayout.
-    var layout by remember(pageIndex) { mutableStateOf<TextLayoutResult?>(null) }
+    // Held in a ref, not a captured var: the pointerInput lambda below is
+    // created once per page and would otherwise close over the value of
+    // `layout` as it was at creation time - which is null, because
+    // onTextLayout has not fired yet. That was the other half of the
+    // "first long-press does nothing" bug.
+    val layoutRef = remember(pageIndex) { mutableStateOf<TextLayoutResult?>(null) }
 
-    val selecting = selection != null
+    // Held in a ref so the gesture detectors below can read the current value
+    // without `selecting` becoming a pointerInput key. See the comment in the
+    // tap handler for why that mattered.
+    val selectingRef = remember { mutableStateOf(false) }
+    selectingRef.value = selection != null
 
     Box(
         Modifier
             .fillMaxSize()
-            .pointerInput(pages.size, selecting) {
+            .pointerInput(pages.size) {
                 detectTapGestures { offset ->
                     // A tap while selecting means "done", not "turn the page".
-                    // Turning the page mid-selection would be maddening.
-                    if (selecting) {
+                    //
+                    // `selectingRef` rather than the `selecting` value: using
+                    // it as a pointerInput key would tear this detector down
+                    // and rebuild it the instant a selection appeared, which
+                    // cancelled the very gesture that created the selection.
+                    // That was the "have to try twice" bug.
+                    if (selectingRef.value) {
                         onSelectionChange(null)
                         return@detectTapGestures
                     }
@@ -673,13 +687,14 @@ private fun PageSurface(
                     }
                 }
             }
-            .pointerInput(pages.size, selecting) {
-                if (selecting) return@pointerInput
+            .pointerInput(pages.size) {
                 detectHorizontalDragGestures(
                     onDragStart = { dragTotal = 0f },
                     onDragEnd = {
                         val threshold = size.width * 0.18f
-                        if (abs(dragTotal) > threshold) {
+                        // Checked here, not as a detector key, for the same
+                        // reason as above.
+                        if (!selectingRef.value && abs(dragTotal) > threshold) {
                             if (dragTotal < 0) onNext() else onPrevious()
                         }
                         dragTotal = 0f
@@ -730,7 +745,7 @@ private fun PageSurface(
                             selectionColour = selectionTint(style.color)
                         ),
                         style = style,
-                        onTextLayout = { layout = it },
+                        onTextLayout = { layoutRef.value = it },
                         modifier = Modifier
                             .fillMaxSize()
                             // Long-press selects a word; dragging afterwards
@@ -744,7 +759,8 @@ private fun PageSurface(
 
                                 detectDragGesturesAfterLongPress(
                                     onDragStart = { pos ->
-                                        val l = layout ?: return@detectDragGesturesAfterLongPress
+                                        val l = layoutRef.value
+                                            ?: return@detectDragGesturesAfterLongPress
                                         val off = l.getOffsetForPosition(pos)
                                         val word = PageText.wordBoundsAt(page.text, off)
                                         if (word != null) {
@@ -760,7 +776,8 @@ private fun PageSurface(
                                         }
                                     },
                                     onDrag = { change, _ ->
-                                        val l = layout ?: return@detectDragGesturesAfterLongPress
+                                        val l = layoutRef.value
+                                            ?: return@detectDragGesturesAfterLongPress
                                         if (anchor < 0) return@detectDragGesturesAfterLongPress
                                         dragged = true
                                         val off = l.getOffsetForPosition(change.position)

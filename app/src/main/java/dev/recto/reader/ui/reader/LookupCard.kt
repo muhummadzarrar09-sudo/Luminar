@@ -16,11 +16,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
@@ -36,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.recto.reader.data.lookup.DictionaryEntry
 import dev.recto.reader.data.lookup.LookupState
@@ -81,10 +85,19 @@ fun LookupSheet(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(Modifier.weight(1f)) {
+                    // A selected phrase can be a whole sentence, so the style
+                    // steps down and wraps rather than overflowing the card.
+                    val isPhrase = word.contains(' ')
                     Text(
                         text = word,
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.SemiBold
+                        style = if (isPhrase) {
+                            MaterialTheme.typography.bodyLarge
+                        } else {
+                            MaterialTheme.typography.titleLarge
+                        },
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis
                     )
                     val phonetic = (dictionary as? LookupState.Success)?.data?.phonetic
                     if (!phonetic.isNullOrBlank()) {
@@ -122,6 +135,26 @@ fun LookupSheet(
                 )
             }
 
+            if (!contextSentence.isNullOrBlank() && word.contains(' ')) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        text = contextSentence,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontStyle = FontStyle.Italic,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 4,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(12.dp)
+                    )
+                }
+            }
+
             Box(
                 Modifier
                     .fillMaxWidth()
@@ -130,8 +163,16 @@ fun LookupSheet(
                     .padding(horizontal = 20.dp, vertical = 14.dp)
             ) {
                 when (tab) {
-                    0 -> DictionaryPane(dictionary, onRetry)
-                    else -> WikipediaPane(wikipedia, onRetry)
+                    0 -> DictionaryPane(
+                        state = dictionary,
+                        onRetry = onRetry,
+                        onSearchWeb = { openUrl(context, googleUrl(word)) }
+                    )
+                    else -> WikipediaPane(
+                        state = wikipedia,
+                        onRetry = onRetry,
+                        onSearchWeb = { openUrl(context, googleUrl(word)) }
+                    )
                 }
             }
 
@@ -146,18 +187,34 @@ fun LookupSheet(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 AssistChip(
-                    onClick = { openUrl(context, "https://www.google.com/search?q=" + enc(word)) },
+                    onClick = { openUrl(context, googleUrl(word)) },
                     label = { Text("Search the web") }
                 )
-                AssistChip(
-                    onClick = {
-                        openUrl(
-                            context,
-                            "https://www.google.com/search?q=" + enc("define $word")
-                        )
-                    },
-                    label = { Text("Define on Google") }
-                )
+                if (!word.contains(' ')) {
+                    AssistChip(
+                        onClick = {
+                            openUrl(
+                                context,
+                                "https://www.google.com/search?q=" + enc("define $word")
+                            )
+                        },
+                        label = { Text("Define on Google") }
+                    )
+                } else {
+                    // For a phrase, "what does X mean" is what a person would
+                    // actually type - and it is what surfaces idiom and
+                    // metaphor explanations rather than dictionary stubs.
+                    AssistChip(
+                        onClick = {
+                            openUrl(
+                                context,
+                                "https://www.google.com/search?q=" +
+                                    enc("what does \"$word\" mean")
+                            )
+                        },
+                        label = { Text("Explain this phrase") }
+                    )
+                }
                 (wikipedia as? LookupState.Success)?.data?.let { summary ->
                     AssistChip(
                         onClick = { openUrl(context, summary.pageUrl) },
@@ -170,13 +227,21 @@ fun LookupSheet(
 }
 
 @Composable
-private fun DictionaryPane(state: LookupState<DictionaryEntry>, onRetry: () -> Unit) {
+private fun DictionaryPane(
+    state: LookupState<DictionaryEntry>,
+    onRetry: () -> Unit,
+    onSearchWeb: () -> Unit
+) {
     when (state) {
         is LookupState.Idle, is LookupState.Loading -> Loading()
 
-        is LookupState.Empty -> Message(state.message, onRetry = null)
+        is LookupState.Empty -> NotFound(state.message, onSearchWeb = onSearchWeb)
 
-        is LookupState.Failed -> Message(state.message, onRetry = onRetry)
+        is LookupState.Failed -> NotFound(
+            state.message,
+            onSearchWeb = onSearchWeb,
+            onRetry = onRetry
+        )
 
         is LookupState.Success -> Column {
             state.data.entries.forEach { pos ->
@@ -237,13 +302,21 @@ private fun DictionaryPane(state: LookupState<DictionaryEntry>, onRetry: () -> U
 }
 
 @Composable
-private fun WikipediaPane(state: LookupState<WikipediaSummary>, onRetry: () -> Unit) {
+private fun WikipediaPane(
+    state: LookupState<WikipediaSummary>,
+    onRetry: () -> Unit,
+    onSearchWeb: () -> Unit
+) {
     when (state) {
         is LookupState.Idle, is LookupState.Loading -> Loading()
 
-        is LookupState.Empty -> Message(state.message, onRetry = null)
+        is LookupState.Empty -> NotFound(state.message, onSearchWeb = onSearchWeb)
 
-        is LookupState.Failed -> Message(state.message, onRetry = onRetry)
+        is LookupState.Failed -> NotFound(
+            state.message,
+            onSearchWeb = onSearchWeb,
+            onRetry = onRetry
+        )
 
         is LookupState.Success -> Column {
             state.data.description?.let {
@@ -266,18 +339,42 @@ private fun Loading() {
     }
 }
 
+/**
+ * Shown when a lookup finds nothing.
+ *
+ * The message states plainly what was not found, and directly under it sits
+ * ONE prominent button: search the web. Nothing found is exactly the moment
+ * the user needs an obvious next step, not a row of small equal-weight chips
+ * to choose between.
+ */
 @Composable
-private fun Message(text: String, onRetry: (() -> Unit)?) {
-    Column {
+private fun NotFound(
+    message: String,
+    onSearchWeb: () -> Unit,
+    onRetry: (() -> Unit)? = null
+) {
+    Column(Modifier.fillMaxWidth()) {
         Text(
-            text = text,
+            text = message,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+
+        Spacer(Modifier.height(16.dp))
+
+        Button(
+            onClick = onSearchWeb,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Search the web")
+        }
+
         if (onRetry != null) {
-            Spacer(Modifier.height(8.dp))
-            TextButton(onClick = onRetry, contentPadding = androidx.compose.foundation.layout
-                .PaddingValues(0.dp)) {
+            Spacer(Modifier.height(4.dp))
+            TextButton(
+                onClick = onRetry,
+                modifier = Modifier.fillMaxWidth()
+            ) {
                 Text("Try again")
             }
         }
@@ -285,6 +382,12 @@ private fun Message(text: String, onRetry: (() -> Unit)?) {
 }
 
 private fun enc(s: String): String = Uri.encode(s)
+
+/** A plain web search, which is the right answer for a phrase or metaphor. */
+private fun googleUrl(term: String): String =
+    "https://www.google.com/search?q=" + enc(
+        if (term.contains(' ')) "\"$term\" meaning" else "$term meaning"
+    )
 
 private fun openUrl(context: android.content.Context, url: String) {
     runCatching {
