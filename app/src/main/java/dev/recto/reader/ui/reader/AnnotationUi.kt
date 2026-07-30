@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.GenericShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -42,6 +44,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.recto.reader.data.HighlightColour
 import dev.recto.reader.data.db.AnnotationEntity
@@ -54,6 +57,11 @@ import dev.recto.reader.data.db.AnnotationKind
  * Deliberately a floating bar rather than a bottom sheet - a sheet would
  * cover the very text you just selected, which is exactly what you want to
  * keep looking at while choosing a colour.
+ *
+ * @param caretX     caret tip measured from this card's left edge, or null
+ *                   for no caret at all
+ * @param caretAbove true when the card is above the selection, so the caret
+ *                   hangs off the bottom edge pointing down
  */
 @Composable
 fun SelectionToolbar(
@@ -61,7 +69,89 @@ fun SelectionToolbar(
     onDefine: () -> Unit,
     onNote: () -> Unit,
     onCopy: () -> Unit,
-    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+    caretX: Dp? = null,
+    caretAbove: Boolean = true
+) {
+    // A caret welds the card to the words. Without one a floating panel is
+    // just a panel that happens to be nearby; with one it is unmistakably
+    // about *that* passage. Kindle, and every text-selection UI worth
+    // copying, does this.
+    //
+    // Drawn as a separate triangle stacked against the card rather than
+    // carved into the card's own shape, because a GenericShape covering both
+    // would have to re-implement the rounded corners by hand.
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.Start
+    ) {
+        if (caretX != null && !caretAbove) {
+            Caret(offsetX = caretX, pointsDown = false)
+        }
+
+        SelectionToolbarCard(
+            onColour = onColour,
+            onDefine = onDefine,
+            onNote = onNote,
+            onCopy = onCopy
+        )
+
+        if (caretX != null && caretAbove) {
+            Caret(offsetX = caretX, pointsDown = true)
+        }
+    }
+}
+
+/** The little triangle that points from the card to the selected words. */
+@Composable
+private fun Caret(offsetX: Dp, pointsDown: Boolean) {
+    val shape = remember(pointsDown) {
+        GenericShape { size, _ ->
+            if (pointsDown) {
+                moveTo(0f, 0f)
+                lineTo(size.width, 0f)
+                lineTo(size.width / 2f, size.height)
+            } else {
+                moveTo(size.width / 2f, 0f)
+                lineTo(size.width, size.height)
+                lineTo(0f, size.height)
+            }
+            close()
+        }
+    }
+
+    // A Surface, not a Box with a background, and with the SAME
+    // tonalElevation as the card. Material tints a surface by its elevation,
+    // so a triangle painted with the raw `surface` colour comes out visibly
+    // paler than the card it is supposed to be part of.
+    Surface(
+        modifier = Modifier
+            // Half the caret's width, so the TIP lands on the anchor rather
+            // than the triangle's left corner.
+            .offset(x = offsetX - CaretWidth / 2)
+            .size(width = CaretWidth, height = CaretHeight),
+        shape = shape,
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = ToolbarElevation
+    ) {}
+}
+
+private val CaretWidth = 18.dp
+private val CaretHeight = 9.dp
+
+/**
+ * Shared by the card and its caret so the two read as one piece of paper.
+ * No shadow on the caret - a drop shadow on a 9dp triangle just muddies the
+ * point, and the card's own shadow already lifts the whole thing.
+ */
+private val ToolbarElevation = 3.dp
+
+@Composable
+private fun SelectionToolbarCard(
+    onColour: (Int) -> Unit,
+    onDefine: () -> Unit,
+    onNote: () -> Unit,
+    onCopy: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     // Two rows, not one scrolling strip.
@@ -79,7 +169,7 @@ fun SelectionToolbar(
         modifier = modifier.widthIn(max = 380.dp),
         shape = RoundedCornerShape(20.dp),
         color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 3.dp,
+        tonalElevation = ToolbarElevation,
         shadowElevation = 10.dp
     ) {
         Column(

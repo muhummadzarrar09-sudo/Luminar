@@ -326,14 +326,17 @@ for path, f in files.items():
             continue
         if fqn.startswith(f["package"] + "."):
             continue
-        # Modifier functions are always calls, so demand the paren. Matching
-        # a bare '.size' instead flagged IntSize.size and String.width all
-        # over the data layer.
+        # Modifier functions are always calls, so demand a call - but a call
+        # can be '.offset(x)' OR '.offset { .. }', because Kotlin allows a
+        # trailing lambda with no parens. Matching only '(' let a missing
+        # 'import ...layout.offset' through, which is precisely the bug this
+        # check exists to catch. Matching a bare '.size' instead over-fires
+        # on IntSize.size, hence the '[({]' rather than anything looser.
         if simple in UNIT_PROPS:
             hit = re.search(rf"[\d)\w]\s*\.\s*{re.escape(simple)}\b", s)
         else:
-            hit = re.search(rf"\.{re.escape(simple)}\s*\(", s) or \
-                  re.search(rf"(?<![\w.]){re.escape(simple)}\s*\(", s)
+            hit = re.search(rf"\.{re.escape(simple)}\s*[({{]", s) or \
+                  re.search(rf"(?<![\w.]){re.escape(simple)}\s*[({{]", s)
         if not hit:
             continue
         # skip fully-qualified use sites

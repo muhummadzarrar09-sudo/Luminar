@@ -705,6 +705,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         val pages = (_state.value as? ReaderState.Ready)?.pages ?: return
         if (_pageIndex.value < pages.size - 1) {
             _pageIndex.value++
+            _selection.value = null
             sessionTracker.onPageTurned()
             scheduleSave()
         }
@@ -713,6 +714,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     fun previous() {
         if (_pageIndex.value > 0) {
             _pageIndex.value--
+            _selection.value = null
             sessionTracker.onPageTurned()
             scheduleSave()
         }
@@ -721,6 +723,12 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     fun goTo(index: Int) {
         val pages = (_state.value as? ReaderState.Ready)?.pages ?: return
         _pageIndex.value = index.coerceIn(0, (pages.size - 1).coerceAtLeast(0))
+        // Leaving the page a selection belongs to has to drop the selection.
+        // The offsets are absolute, so a stale one still resolves - it just
+        // resolves to somewhere off this page, and the toolbar would point at
+        // nothing. Volume keys make this easy to hit: highlight, then press
+        // volume-down without dismissing.
+        _selection.value = null
         scheduleSave()
     }
 

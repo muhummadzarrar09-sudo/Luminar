@@ -26,9 +26,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -48,10 +51,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
@@ -62,6 +71,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
@@ -423,7 +434,31 @@ private fun ReaderContent(
         level = if (settings.useReaderBrightness) settings.brightness else null
     )
 
-    Box(Modifier.fillMaxSize()) {
+    // Geometry for the floating selection toolbar. All in pixels, all in the
+    // coordinate space of the root Box below.
+    var containerSize by remember { mutableStateOf(IntSize.Zero) }
+    var containerOrigin by remember { mutableStateOf(Offset.Zero) }
+    var toolbarSize by remember { mutableStateOf(IntSize.Zero) }
+    var selectionBounds by remember { mutableStateOf<SelectionBounds?>(null) }
+
+    // Measured, not assumed. The top bar's height depends on the title's font
+    // and the bottom bar's on the scrubber, so hard-coding either would drift
+    // the moment they change.
+    var topChromeHeight by remember { mutableStateOf(0) }
+    var bottomChromeHeight by remember { mutableStateOf(0) }
+
+    // A stale rectangle is worse than none: it would point the caret at words
+    // that are no longer selected.
+    LaunchedEffect(selection) {
+        if (selection == null) selectionBounds = null
+    }
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .onSizeChanged { containerSize = it }
+            .onGloballyPositioned { containerOrigin = it.positionInWindow() }
+    ) {
 
         // An invisible stand-in for the text box, laid out with exactly the
         // same insets and margins. It is always present, so it can report the
@@ -464,6 +499,7 @@ private fun ReaderContent(
                 selection = selection,
                 darkTheme = settings.theme.isDark,
                 onSelectionChange = vm::setSelection,
+                onSelectionBounds = { selectionBounds = it },
                 onLookUp = { vm.lookUp(it) },
                 pageStartOf = vm::pageStartOf,
                 onNext = vm::next,
@@ -479,10 +515,53 @@ private fun ReaderContent(
         // more warmth you applied, which is the opposite of helpful.
         EyeComfortOverlay(warmth = settings.warmth, dim = settings.dim)
 
-        // Selection toolbar. Sits just above the bottom edge so it never
-        // covers the words you are selecting near the middle of the page.
-        if (selection != null) {
+        // Selection toolbar, placed against the words rather than parked at
+        // the bottom of the screen.
+        //
+        // The old version was pinned to BottomCenter. That is fine when you
+        // select near the top, and wrong every other time: selecting the last
+        // paragraph put the card directly over it, and with the chrome open
+        // the card hid behind the scrubber entirely.
+        if (selection != null && selectionBounds != null && containerSize.width > 0) {
             val clipboard = LocalClipboardManager.current
+            val density = LocalDensity.current
+            val layoutDirection = LocalLayoutDirection.current
+            val insets = WindowInsets.safeDrawing
+
+            // Window space -> container space. Subtracting the container's
+            // own window position is what makes this correct regardless of
+            // anything wrapping the reader.
+            val anchored = selectionBounds!!
+            val localBounds = anchored.copy(
+                top = anchored.top - containerOrigin.y,
+                bottom = anchored.bottom - containerOrigin.y,
+                topAnchorX = anchored.topAnchorX - containerOrigin.x,
+                bottomAnchorX = anchored.bottomAnchorX - containerOrigin.x
+            )
+
+            // Computed on every recomposition rather than remembered. It is a
+            // dozen comparisons on values that are already in registers, and
+            // the alternative is a key list that has to name the insets and
+            // the density - miss one and the toolbar quietly uses last
+            // orientation's numbers. Not worth the risk to save this.
+            val placement = SelectionAnchor.place(
+                bounds = localBounds,
+                containerWidth = containerSize.width,
+                containerHeight = containerSize.height,
+                toolbarWidth = toolbarSize.width,
+                toolbarHeight = toolbarSize.height,
+                // Chrome only blocks space while it is actually on screen.
+                topBlocked = insets.getTop(density) +
+                    if (chromeVisible) topChromeHeight else 0,
+                bottomBlocked = insets.getBottom(density) +
+                    if (chromeVisible) bottomChromeHeight else 0,
+                leftBlocked = insets.getLeft(density, layoutDirection),
+                rightBlocked = insets.getRight(density, layoutDirection),
+                gap = with(density) { 10.dp.roundToPx() },
+                margin = with(density) { 12.dp.roundToPx() },
+                caretInset = with(density) { 22.dp.toPx() }
+            )
+
             SelectionToolbar(
                 onColour = vm::highlightSelection,
                 onDefine = vm::lookUpSelection,
@@ -491,11 +570,16 @@ private fun ReaderContent(
                     clipboard.setText(AnnotatedString(vm.selectedText()))
                     vm.clearSelection()
                 },
-                onDismiss = vm::clearSelection,
+                caretX = with(density) { placement.caretX.toDp() },
+                caretAbove = placement.above,
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .safeDrawingPadding()
-                    .padding(horizontal = 8.dp, vertical = 12.dp)
+                    .align(Alignment.TopStart)
+                    .offset { IntOffset(placement.x, placement.y) }
+                    .onSizeChanged { toolbarSize = it }
+                    // Hidden for the single frame before its size is known,
+                    // otherwise the card flashes at the top-left corner and
+                    // jumps into place.
+                    .alpha(if (toolbarSize.width == 0) 0f else 1f)
             )
         }
 
@@ -504,7 +588,12 @@ private fun ReaderContent(
             visible = chromeVisible,
             enter = slideInVertically { -it } + fadeIn(),
             exit = slideOutVertically { -it } + fadeOut(),
-            modifier = Modifier.align(Alignment.TopCenter)
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                // Measured so the selection toolbar knows what to avoid. The
+                // height depends on the title's font, so hard-coding it would
+                // drift the moment typography changes.
+                .onSizeChanged { topChromeHeight = it.height }
         ) {
             Surface(tonalElevation = 3.dp, shadowElevation = 4.dp) {
                 var menuOpen by remember { mutableStateOf(false) }
@@ -610,7 +699,9 @@ private fun ReaderContent(
                 visible = chromeVisible,
                 enter = slideInVertically { it } + fadeIn(),
                 exit = slideOutVertically { it } + fadeOut(),
-                modifier = Modifier.align(Alignment.BottomCenter)
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .onSizeChanged { bottomChromeHeight = it.height }
             ) {
                 Surface(tonalElevation = 3.dp, shadowElevation = 4.dp) {
                     Column(
@@ -688,6 +779,8 @@ private fun PageSurface(
     selection: IntRange?,
     darkTheme: Boolean,
     onSelectionChange: (IntRange?) -> Unit,
+    /** Reports where the selection sits, in window pixels. */
+    onSelectionBounds: (SelectionBounds?) -> Unit,
     onLookUp: (String) -> Unit,
     /** Absolute book offset of a page's first character. */
     pageStartOf: (Int) -> Int,
@@ -696,15 +789,6 @@ private fun PageSurface(
     onToggleChrome: () -> Unit
 ) {
     var dragTotal by remember { mutableFloatStateOf(0f) }
-
-    // Layout of the page currently on screen, needed to turn a touch point
-    // into a character offset. Set by Text's onTextLayout.
-    // Held in a ref, not a captured var: the pointerInput lambda below is
-    // created once per page and would otherwise close over the value of
-    // `layout` as it was at creation time - which is null, because
-    // onTextLayout has not fired yet. That was the other half of the
-    // "first long-press does nothing" bug.
-    val layoutRef = remember(pageIndex) { mutableStateOf<TextLayoutResult?>(null) }
 
     // Held in a ref so the gesture detectors below can read the current value
     // without `selecting` becoming a pointerInput key. See the comment in the
@@ -788,6 +872,68 @@ private fun PageSurface(
                 if (page != null) {
                     val pageStart = pageStartOf(index)
 
+                    // Layout of THIS page, needed to turn a touch point into a
+                    // character offset. Set by Text's onTextLayout.
+                    //
+                    // Declared inside the AnimatedContent lambda, so each page
+                    // owns its own. It used to live outside, keyed on
+                    // pageIndex - but AnimatedContent keeps both the outgoing
+                    // and incoming page composed during a turn, and the
+                    // outgoing one fires onTextLayout too. Both wrote to the
+                    // same ref, so the last writer won and gestures could
+                    // resolve against the wrong page's layout.
+                    //
+                    // Held in a ref, not a captured var: the pointerInput
+                    // lambda below is created once and would otherwise close
+                    // over the value as it was at creation time - which is
+                    // null, because onTextLayout has not fired yet. That was
+                    // the other half of the "first long-press does nothing"
+                    // bug.
+                    val layoutRef = remember(index) {
+                        mutableStateOf<TextLayoutResult?>(null)
+                    }
+
+                    // Where this Text sits in WINDOW coordinates. The Text is
+                    // nested several padded boxes deep, so offsets from
+                    // TextLayoutResult are local to it and have to be
+                    // translated before the toolbar can use them.
+                    //
+                    // Window coordinates rather than root: the caller
+                    // subtracts the container's own window position, which
+                    // works no matter what ends up wrapping this screen.
+                    // positionInRoot would silently be wrong the day a
+                    // Scaffold or padding appears above the reader Box.
+                    val textOrigin = remember(index) { mutableStateOf(Offset.Zero) }
+
+                    // Measure the selection whenever it, or the layout under
+                    // it, changes.
+                    //
+                    // Guarded on `index == pageIndex` because AnimatedContent
+                    // keeps the outgoing page composed through the turn
+                    // animation. Without the guard the old page also reports
+                    // bounds, and whichever effect happened to run last wins -
+                    // so the toolbar would sometimes point at the previous
+                    // page's geometry.
+                    val layout = layoutRef.value
+                    val origin = textOrigin.value
+                    LaunchedEffect(selection, layout, origin, pageStart, index, pageIndex) {
+                        if (index != pageIndex) return@LaunchedEffect
+                        val sel = selection
+                        if (sel == null || layout == null) {
+                            if (index == pageIndex) onSelectionBounds(null)
+                            return@LaunchedEffect
+                        }
+                        onSelectionBounds(
+                            SelectionAnchor.boundsOf(
+                                layout = layout,
+                                from = sel.first - pageStart,
+                                to = sel.last - pageStart,
+                                dx = origin.x,
+                                dy = origin.y
+                            )
+                        )
+                    }
+
                     Text(
                         text = PageText.build(
                             text = page.text,
@@ -801,6 +947,9 @@ private fun PageSurface(
                         onTextLayout = { layoutRef.value = it },
                         modifier = Modifier
                             .fillMaxSize()
+                            .onGloballyPositioned { coords ->
+                                textOrigin.value = coords.positionInWindow()
+                            }
                             // Long-press selects a word; dragging afterwards
                             // extends the selection. Placed on the Text rather
                             // than the outer Box so offsets map directly onto
