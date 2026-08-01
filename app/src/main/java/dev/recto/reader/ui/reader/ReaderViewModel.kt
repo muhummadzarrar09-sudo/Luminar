@@ -25,7 +25,9 @@ import dev.recto.reader.data.search.SearchHit
 import dev.recto.reader.data.search.TextSearch
 import dev.recto.reader.data.stats.ReadingStats
 import dev.recto.reader.data.stats.SessionTracker
+import dev.recto.reader.data.tts.EngineOption
 import dev.recto.reader.data.tts.SpeechEngine
+import dev.recto.reader.data.tts.SpeechListener
 import dev.recto.reader.data.tts.SystemSpeechEngine
 import dev.recto.reader.data.tts.Utterance
 import dev.recto.reader.data.tts.Utterances
@@ -109,6 +111,16 @@ sealed interface UndoableAction {
  * for something this small.
  */
 private const val UNDO_WINDOW_MS = 6_000L
+
+/**
+ * The line used to audition a voice.
+ *
+ * Deliberately prose rather than "testing one two three": you are
+ * judging whether it is pleasant for an hour, and that only shows up on
+ * a real sentence with real rhythm and a comma to breathe at.
+ */
+private const val PREVIEW_SENTENCE =
+    "It was a bright cold day in April, and the clocks were striking thirteen."
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ReaderViewModel(app: Application) : AndroidViewModel(app) {
@@ -1030,6 +1042,9 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     private val _voices = MutableStateFlow<List<VoiceOption>>(emptyList())
     val voices: StateFlow<List<VoiceOption>> = _voices.asStateFlow()
 
+    private val _engines = MutableStateFlow<List<EngineOption>>(emptyList())
+    val engines: StateFlow<List<EngineOption>> = _engines.asStateFlow()
+
     private val _speechError = MutableStateFlow<String?>(null)
     val speechError: StateFlow<String?> = _speechError.asStateFlow()
 
@@ -1054,7 +1069,6 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private var queue: List<Utterance> = emptyList()
-    private var queueIndex = 0
     private var speechJob: Job? = null
     private var sleepJob: Job? = null
 
@@ -1072,6 +1086,85 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     private var speechGeneration = 0
 
     /**
+     * How many sentences to keep queued in the engine.
+     *
+     * Three is enough to cover synthesis of the next chunk even on a slow
+     * chip, without queueing so far ahead that stopping feels laggy - the
+     * engine finishes its current utterance before a flush takes effect.
+     */
+    private val LOOKAHEAD = 3
+
+    /** Next index to hand to the engine. */
+    private var queuedIndex = 0
+
+    /** Index actually sounding right now, or -1. */
+    private var playingIndex = -1
+
+    /** Utterance ids handed over but not yet finished. */
+    private val pending = mutableListOf<String>()
+    private val idToIndex = mutableMapOf<String, Int>()
+
+    private fun utteranceId(generation: Int, index: Int) = "recto-$generation-$index"
+
+    /**
+     * One listener for the whole session, dispatching by utterance id.
+     *
+     * The id carries its generation, so a callback from a session that has
+     * been stopped is dropped rather than advancing the new queue. Without
+     * that, stop-then-start-elsewhere silently eats a sentence.
+     */
+    private val speechListener = object : SpeechListener {
+        override fun onStart(id: String) {
+            val index = idToIndex[id] ?: return
+            val generation = generationOf(id) ?: return
+            viewModelScope.launch { onUtteranceStart(generation, index) }
+        }
+
+        override fun onRange(id: String, start: Int, end: Int) {
+            val index = idToIndex[id] ?: return
+            val generation = generationOf(id) ?: return
+            viewModelScope.launch {
+                if (generation != speechGeneration) return@launch
+                val current = queue.getOrNull(index) ?: return@launch
+                // Engine offsets are relative to the SPOKEN string, which
+                // forSpeech may have shortened. Clamp so a mismatch can never
+                // highlight past the sentence.
+                val from = (current.start + start)
+                    .coerceIn(current.start, current.end)
+                val to = (current.start + end).coerceIn(from, current.end)
+                _spokenRange.value = from until to
+            }
+        }
+
+        override fun onDone(id: String) {
+            val generation = generationOf(id) ?: return
+            viewModelScope.launch {
+                if (generation != speechGeneration) return@launch
+                if (!_speaking.value) return@launch
+                pending.remove(id)
+                idToIndex.remove(id)
+                if (queuedIndex >= queue.size && pending.isEmpty()) {
+                    stopSpeaking()
+                    return@launch
+                }
+                pump(generation)
+            }
+        }
+
+        override fun onError(id: String, message: String) {
+            val generation = generationOf(id) ?: return
+            viewModelScope.launch {
+                if (generation != speechGeneration) return@launch
+                _speechError.value = message
+                stopSpeaking()
+            }
+        }
+    }
+
+    private fun generationOf(id: String): Int? =
+        id.split('-').getOrNull(1)?.toIntOrNull()
+
+    /**
      * Starts reading aloud from [fromChar], or from the top of the page.
      *
      * The queue is built for the WHOLE BOOK from that point, not just the
@@ -1084,20 +1177,21 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
         speechJob?.cancel()
         speechJob = viewModelScope.launch {
-            if (!speech.isReady && !speech.prepare()) {
+            if (!speech.isReady && !speech.prepare(settings.value.ttsEnginePackage)) {
                 _speechError.value =
                     "No text-to-speech engine is installed. Install one, then " +
                         "pick it in Android settings under Accessibility."
                 return@launch
             }
 
+            speech.setListener(speechListener)
+            _engines.value = speech.engines()
             _voices.value = speech.voices(java.util.Locale.getDefault())
             speech.selectVoice(settings.value.ttsVoiceId)
 
             val start = fromChar ?: pageStartChar()
             val whole = wholeText(ready)
             queue = Utterances.split(whole).filter { it.end > start }
-            queueIndex = 0
 
             if (queue.isEmpty()) {
                 _speechError.value = "Nothing left to read in this book"
@@ -1106,6 +1200,10 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
             _speaking.value = true
             speechGeneration++
+            queuedIndex = 0
+            playingIndex = -1
+            pending.clear()
+            idToIndex.clear()
 
             // Start the foreground service ONCE, here, while the app is
             // definitely in the foreground - Android 12+ rejects a
@@ -1118,63 +1216,78 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                 line = queue.firstOrNull()?.text?.take(90).orEmpty()
             )
 
-            speakCurrent(speechGeneration)
+            pump(speechGeneration, flush = true)
         }
     }
 
-    private fun speakCurrent(generation: Int) {
+    /**
+     * Tops the engine's queue up to [LOOKAHEAD] pending utterances.
+     *
+     * This is the fix for the thing that made read-aloud sound broken. The
+     * first version spoke ONE sentence, waited for onDone, then synthesised
+     * the next - so every full stop had a dead gap while the model generated
+     * the next chunk. On a fast phone a few hundred milliseconds; on a budget
+     * chip, painfully obvious. It made good voices sound bad.
+     *
+     * Queueing ahead means the engine synthesises sentence N+1 while N is
+     * still playing, so the audio is continuous.
+     *
+     * @param flush true when jumping somewhere new, which drops whatever the
+     *              engine still has buffered from the old position
+     */
+    private fun pump(generation: Int, flush: Boolean = false) {
         if (generation != speechGeneration) return
 
-        val current = queue.getOrNull(queueIndex)
-        if (current == null) {
-            stopSpeaking()
-            return
-        }
+        var first = flush
+        while (queuedIndex < queue.size && pending.size < LOOKAHEAD) {
+            val index = queuedIndex
+            val utterance = queue[index]
+            val id = utteranceId(generation, index)
 
+            val accepted = speech.enqueue(
+                id = id,
+                text = utterance.text,
+                flush = first,
+                speed = settings.value.ttsSpeed,
+                pitch = settings.value.ttsPitch
+            )
+
+            if (!accepted) {
+                _speechError.value = "The engine refused that passage"
+                stopSpeaking()
+                return
+            }
+
+            pending += id
+            idToIndex[id] = index
+            first = false
+            queuedIndex++
+        }
+    }
+
+    /**
+     * Called when audio for an utterance actually STARTS.
+     *
+     * Highlighting and page turns hang off this rather than off enqueueing -
+     * with a lookahead of three, enqueue order runs several sentences ahead
+     * of what you can hear, so turning the page there would flip it early
+     * and highlight the wrong line.
+     */
+    private fun onUtteranceStart(generation: Int, index: Int) {
+        if (generation != speechGeneration) return
+        val current = queue.getOrNull(index) ?: return
+
+        playingIndex = index
         _spokenRange.value = current.start until current.end
         updateNotification(current)
 
         // Follow the voice. If the sentence being read is not on the page in
-        // front of you, turn to it - that is the whole point of read-aloud
-        // continuing past a page break.
+        // front of you, turn to it.
         val target = pageForChar(current.start)
         if (target != _pageIndex.value) {
             _pageIndex.value = target
             scheduleSave()
         }
-
-        speech.speak(
-            utterance = current,
-            speed = settings.value.ttsSpeed,
-            pitch = settings.value.ttsPitch,
-            onRange = { from, to ->
-                if (generation != speechGeneration) return@speak
-                // Engine offsets are relative to the SPOKEN string, which
-                // forSpeech may have shortened. Clamp into the utterance so a
-                // mismatch can never highlight past its end.
-                val s = (current.start + from).coerceIn(current.start, current.end)
-                val e = (current.start + to).coerceIn(s, current.end)
-                _spokenRange.value = s until e
-            },
-            onDone = {
-                // Hop back onto the ViewModel scope: these callbacks arrive
-                // on an engine thread, and everything below touches state
-                // that drives the UI.
-                viewModelScope.launch {
-                    if (generation != speechGeneration) return@launch
-                    if (!_speaking.value) return@launch
-                    queueIndex++
-                    speakCurrent(generation)
-                }
-            },
-            onError = { message ->
-                viewModelScope.launch {
-                    if (generation != speechGeneration) return@launch
-                    _speechError.value = message
-                    stopSpeaking()
-                }
-            }
-        )
     }
 
     private fun updateNotification(current: Utterance) {
@@ -1201,9 +1314,15 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         cancelSleepTimer()
         ReadAloudService.stop(getApplication())
 
-        // Leave the reading position where the voice got to, so closing the
-        // book after listening resumes in the right place.
-        queue.getOrNull(queueIndex)?.let { rememberChar(it.start) }
+        // Leave the reading position where the voice actually GOT TO, not
+        // where the queue reached. With a lookahead those differ by up to
+        // three sentences, and resuming that far ahead would skip text you
+        // never heard.
+        queue.getOrNull(playingIndex)?.let { rememberChar(it.start) }
+
+        pending.clear()
+        idToIndex.clear()
+        playingIndex = -1
     }
 
     fun toggleSpeaking() {
@@ -1213,26 +1332,42 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     /** Skips to the next or previous sentence without stopping. */
     fun skipSentence(forward: Boolean) {
         if (!_speaking.value) return
-        val next = (queueIndex + if (forward) 1 else -1)
+
+        // Relative to what is SOUNDING, not to what has been queued. The
+        // queue runs up to LOOKAHEAD sentences ahead of the audio, so
+        // skipping from there would jump several sentences at once.
+        val base = if (playingIndex >= 0) playingIndex else 0
+        val next = (base + if (forward) 1 else -1)
             .coerceIn(0, (queue.size - 1).coerceAtLeast(0))
-        if (next == queueIndex) return
-        queueIndex = next
+        if (next == base) return
+
+        restartAt(next)
+    }
+
+    /**
+     * Re-points playback at [index], dropping whatever is buffered.
+     *
+     * A new generation is essential: speech.stop() makes the engine fire
+     * onDone for every utterance it was holding, and those callbacks would
+     * otherwise advance the fresh queue.
+     */
+    private fun restartAt(index: Int) {
         speech.stop()
-        // New generation: speech.stop() makes the engine fire onDone for the
-        // utterance we just abandoned, and without this that callback would
-        // advance the index a second time and skip a sentence.
         speechGeneration++
-        speakCurrent(speechGeneration)
+        pending.clear()
+        idToIndex.clear()
+        queuedIndex = index
+        playingIndex = -1
+        pump(speechGeneration, flush = true)
     }
 
     fun setTtsSpeed(value: Float) = viewModelScope.launch {
         settingsRepo.setTtsSpeed(value)
-        // Rate is applied per utterance, so restart the current one for the
-        // change to be audible immediately rather than at the next sentence.
+        // Everything already queued was synthesised at the old rate, so
+        // re-point at the sentence being spoken to make the change audible
+        // now rather than three sentences from now.
         if (_speaking.value) {
-            speech.stop()
-            speechGeneration++
-            speakCurrent(speechGeneration)
+            restartAt(if (playingIndex >= 0) playingIndex else 0)
         }
     }
 
@@ -1242,10 +1377,54 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         settingsRepo.setTtsVoice(id)
         speech.selectVoice(id)
         if (_speaking.value) {
-            speech.stop()
-            speechGeneration++
-            speakCurrent(speechGeneration)
+            restartAt(if (playingIndex >= 0) playingIndex else 0)
         }
+    }
+
+    /**
+     * Switches TTS engine and reloads its voices.
+     *
+     * A full teardown, because TextToSpeech binds to one engine for its
+     * lifetime - there is no setEngine(). Any saved voice is cleared too:
+     * voice names are engine-specific, so keeping it would leave a dangling
+     * reference that silently falls back to the default.
+     */
+    fun setTtsEngine(packageName: String?) = viewModelScope.launch {
+        val wasSpeaking = _speaking.value
+        val resumeAt = queue.getOrNull(playingIndex)?.start
+
+        stopSpeaking()
+        settingsRepo.setTtsEngine(packageName)
+        settingsRepo.setTtsVoice(null)
+
+        speech.shutdown()
+        if (!speech.prepare(packageName)) {
+            _speechError.value =
+                "That engine would not start. It may still be unpacking - " +
+                    "open it once from your app list, then try again."
+            return@launch
+        }
+
+        speech.setListener(speechListener)
+        speech.selectVoice(null)
+        _engines.value = speech.engines()
+        _voices.value = speech.voices(java.util.Locale.getDefault())
+
+        if (wasSpeaking) startSpeaking(resumeAt)
+    }
+
+    /** Speaks a sample line so a voice can be judged before committing. */
+    fun previewVoice(voiceId: String?) = viewModelScope.launch {
+        if (_speaking.value) return@launch
+        if (!speech.isReady && !speech.prepare(settings.value.ttsEnginePackage)) {
+            return@launch
+        }
+        speech.preview(
+            text = PREVIEW_SENTENCE,
+            voiceId = voiceId,
+            speed = settings.value.ttsSpeed,
+            pitch = settings.value.ttsPitch
+        )
     }
 
     fun dismissSpeechError() {

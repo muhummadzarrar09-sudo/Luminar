@@ -1,7 +1,6 @@
 package dev.recto.reader.data.tts
 
 import android.content.Context
-import android.os.Build
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
@@ -14,68 +13,107 @@ import kotlinx.coroutines.suspendCancellableCoroutine
  * What Recto needs from a voice, and nothing else.
  *
  * WHY THIS INTERFACE EXISTS
- * There are two ways to get neural speech on Android, and they differ by
- * about 55 MB and a licence:
+ * There are two ways to get neural speech on Android:
  *
- *  - The platform TextToSpeech API, pointed at whichever engine the user
- *    has installed. Install the sherpa-onnx Piper engine and you get the
- *    same Piper neural voices you would have bundled, at zero APK cost.
- *  - Bundling sherpa-onnx and an ONNX voice directly. Same models, same
- *    audio, but +55 MB and Recto would have to become GPL-3.0, because
- *    Piper voices phonemise through espeak-ng, which is GPL. The
- *    sherpa-onnx maintainers hit exactly this and are removing espeak-ng
- *    to stay Apache-2.0.
+ *  - The platform TextToSpeech API, pointed at whichever engine the user has
+ *    installed. Google's engine, or a sherpa-onnx Piper/Kokoro engine APK.
+ *  - Bundling sherpa-onnx and an ONNX voice directly. Same models, +55 MB,
+ *    and Recto would have to become GPL-3.0 because Piper phonemises through
+ *    espeak-ng. The sherpa-onnx maintainers hit exactly this and are removing
+ *    espeak-ng to stay Apache-2.0.
  *
- * There is also a technical reason the platform API wins, which is less
- * obvious than the licence: it reports onRangeStart, telling us which
- * characters are being spoken RIGHT NOW. That is what drives the on-page
- * highlight. A bundled ONNX model hands back a buffer of audio samples with
- * no word timings at all, so the highlight would have to be guessed from
- * elapsed time.
+ * The platform API also reports onRangeStart - which characters are being
+ * spoken right now - and that is what drives the on-page highlight. A
+ * bundled ONNX model returns audio samples with no word timings at all.
  *
- * Everything above this interface - sentence splitting, highlighting, page
- * turns, the notification, the sleep timer - is engine-agnostic. If a
- * bundled engine ever becomes the right call, it implements this and
- * nothing else changes.
+ * WHY THE API IS QUEUE-SHAPED
+ * The first version spoke one sentence, waited for onDone, then synthesised
+ * the next. That leaves a dead gap after every full stop while the next
+ * sentence is generated - a few hundred milliseconds on a fast phone,
+ * far worse on a slow one. It made good voices sound broken.
+ *
+ * So the engine now takes a QUEUE. Several sentences are handed over at
+ * once, and the engine synthesises ahead while the current one plays.
+ * That means one listener dispatching by utterance id, rather than a fresh
+ * listener per sentence, which is why the callbacks are registered once in
+ * [setListener] instead of being passed to each speak call.
  */
 interface SpeechEngine {
 
-    /** Ready to speak. False while starting up or if no engine exists. */
     val isReady: Boolean
 
-    suspend fun prepare(): Boolean
+    /**
+     * @param enginePackage which TTS engine to use, or null for the system
+     *                      default. Lets Recto switch engines without sending
+     *                      the reader into Android's accessibility settings.
+     */
+    suspend fun prepare(enginePackage: String? = null): Boolean
+
+    /** TTS engines installed on this device. */
+    fun engines(): List<EngineOption>
+
+    /** Speaks a short sample so a voice can be auditioned before committing. */
+    fun preview(text: String, voiceId: String?, speed: Float, pitch: Float)
+
+    /** Registered once. Every callback carries the id passed to [enqueue]. */
+    fun setListener(listener: SpeechListener)
 
     /**
-     * Speaks [utterance], calling back as it goes.
+     * Hands one utterance to the engine.
      *
-     * @param onRange characters currently being spoken, RELATIVE to the
-     *                utterance text. Not every engine reports this.
+     * @param flush true to drop whatever is queued and start here; false to
+     *              append, which is what keeps the engine working ahead.
+     * @return false if the engine refused it
      */
-    fun speak(
-        utterance: Utterance,
+    fun enqueue(
+        id: String,
+        text: String,
+        flush: Boolean,
         speed: Float,
-        pitch: Float,
-        onRange: (start: Int, end: Int) -> Unit,
-        onDone: () -> Unit,
-        onError: (String) -> Unit
-    )
+        pitch: Float
+    ): Boolean
 
     fun stop()
 
     fun shutdown()
 
-    /** Voices this engine offers for [locale], best first. */
     fun voices(locale: Locale): List<VoiceOption>
 
     fun selectVoice(id: String?)
 }
+
+/** Utterance id used for voice previews, so callbacks can ignore them. */
+const val PREVIEW_ID = "recto-preview"
+
+/**
+ * Progress for queued utterances.
+ *
+ * All of these arrive on an engine thread, not the main thread.
+ */
+interface SpeechListener {
+    /** Audio for [id] has actually begun. The right moment to highlight. */
+    fun onStart(id: String)
+
+    /** Characters [start] until [end] of [id]'s text are being spoken. */
+    fun onRange(id: String, start: Int, end: Int)
+
+    fun onDone(id: String)
+
+    fun onError(id: String, message: String)
+}
+
+/** A TTS engine installed on the device. */
+data class EngineOption(
+    val packageName: String,
+    val label: String
+)
 
 /** A voice the user can pick, flattened out of whatever the engine exposes. */
 data class VoiceOption(
     val id: String,
     val label: String,
     val localeTag: String,
-    /** True if it works with no network. The whole point, so it is surfaced. */
+    /** True if it works with no network. */
     val offline: Boolean,
     /** Engine's own 100..500 rating; higher is better. */
     val quality: Int
@@ -84,40 +122,84 @@ data class VoiceOption(
 /**
  * The platform engine.
  *
- * Speaks through whatever TTS engine the user has set in Android settings.
- * With the sherpa-onnx Piper engine installed that is genuine on-device
- * neural speech; with Google's it is Google's voices. Recto does not care,
- * which is the point.
+ * Speaks through whatever TTS engine Android is set to. Recto does not care
+ * which, and that is the point.
  */
 class SystemSpeechEngine(private val context: Context) : SpeechEngine {
 
     private var tts: TextToSpeech? = null
     private var preferredVoiceId: String? = null
+    private var listener: SpeechListener? = null
+
+    /** Rate and pitch are engine-wide, so only re-apply when they change. */
+    private var appliedSpeed = Float.NaN
+    private var appliedPitch = Float.NaN
 
     @Volatile
     private var ready = false
 
     override val isReady: Boolean get() = ready
 
-    /**
-     * TextToSpeech signals readiness through a callback, so this bridges it
-     * to a suspend function. Everything downstream can then just await a
-     * usable engine instead of polling a flag.
-     */
-    override suspend fun prepare(): Boolean = suspendCancellableCoroutine { cont ->
+    override suspend fun prepare(enginePackage: String?): Boolean =
+        suspendCancellableCoroutine { cont ->
         // Guard against a double resume: onInit is documented to fire once,
         // but a misbehaving third-party engine calling it twice would crash
         // the coroutine machinery rather than the engine.
         var resumed = false
 
-        val engine = TextToSpeech(context.applicationContext) { status ->
+        val onInit = TextToSpeech.OnInitListener { status ->
             ready = status == TextToSpeech.SUCCESS
             if (!resumed) {
                 resumed = true
                 cont.resume(ready)
             }
         }
+
+        // The three-arg constructor picks a specific engine. Passing null
+        // would NOT mean "default" - it throws - so the branch is real.
+        val engine = if (enginePackage.isNullOrBlank()) {
+            TextToSpeech(context.applicationContext, onInit)
+        } else {
+            TextToSpeech(context.applicationContext, onInit, enginePackage)
+        }
         tts = engine
+        appliedSpeed = Float.NaN
+        appliedPitch = Float.NaN
+
+        // One listener for the whole session, dispatching by id. Setting a
+        // fresh listener per utterance would break queueing outright: the
+        // last one set wins, so every earlier sentence in the queue would
+        // lose its callbacks.
+        engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            override fun onStart(utteranceId: String?) {
+                utteranceId?.let { listener?.onStart(it) }
+            }
+
+            override fun onDone(utteranceId: String?) {
+                utteranceId?.let { listener?.onDone(it) }
+            }
+
+            @Deprecated("Superseded by onError(String, Int)")
+            override fun onError(utteranceId: String?) {
+                utteranceId?.let {
+                    listener?.onError(it, "The voice stopped unexpectedly")
+                }
+            }
+
+            override fun onError(utteranceId: String?, errorCode: Int) {
+                val id = utteranceId ?: return
+                listener?.onError(id, describe(errorCode))
+            }
+
+            override fun onRangeStart(
+                utteranceId: String?,
+                start: Int,
+                end: Int,
+                frame: Int
+            ) {
+                utteranceId?.let { listener?.onRange(it, start, end) }
+            }
+        })
 
         cont.invokeOnCancellation {
             runCatching { engine.shutdown() }
@@ -126,81 +208,85 @@ class SystemSpeechEngine(private val context: Context) : SpeechEngine {
         }
     }
 
-    override fun speak(
-        utterance: Utterance,
-        speed: Float,
-        pitch: Float,
-        onRange: (Int, Int) -> Unit,
-        onDone: () -> Unit,
-        onError: (String) -> Unit
-    ) {
-        val engine = tts
-        if (engine == null || !ready) {
-            onError("No speech engine is available")
-            return
-        }
+    private fun describe(errorCode: Int): String = when (errorCode) {
+        TextToSpeech.ERROR_NETWORK,
+        TextToSpeech.ERROR_NETWORK_TIMEOUT ->
+            "That voice needs the internet. Pick one marked offline, or " +
+                "reconnect."
+        TextToSpeech.ERROR_NOT_INSTALLED_YET ->
+            "The voice data is still downloading"
+        TextToSpeech.ERROR_SYNTHESIS ->
+            "The engine could not read that passage"
+        else -> "The voice stopped unexpectedly"
+    }
 
-        engine.setSpeechRate(speed)
-        engine.setPitch(pitch)
+    override fun setListener(listener: SpeechListener) {
+        this.listener = listener
+    }
+
+    override fun enqueue(
+        id: String,
+        text: String,
+        flush: Boolean,
+        speed: Float,
+        pitch: Float
+    ): Boolean {
+        val engine = tts ?: return false
+        if (!ready) return false
+
+        // setSpeechRate/setPitch affect everything queued afterwards, so
+        // calling them on every utterance is wasted work. More importantly,
+        // some engines restart synthesis when the rate changes, which would
+        // undo the buffering we are here to build.
+        if (speed != appliedSpeed) {
+            engine.setSpeechRate(speed)
+            appliedSpeed = speed
+        }
+        if (pitch != appliedPitch) {
+            engine.setPitch(pitch)
+            appliedPitch = pitch
+        }
 
         preferredVoiceId?.let { wanted ->
-            engine.voices?.firstOrNull { it.name == wanted }?.let { engine.voice = it }
+            if (engine.voice?.name != wanted) {
+                engine.voices?.firstOrNull { it.name == wanted }
+                    ?.let { engine.voice = it }
+            }
         }
-
-        val id = "recto-${utterance.start}"
-
-        engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-            override fun onStart(utteranceId: String?) = Unit
-
-            override fun onDone(utteranceId: String?) {
-                if (utteranceId == id) onDone()
-            }
-
-            @Deprecated("Superseded by onError(String, Int)")
-            override fun onError(utteranceId: String?) {
-                if (utteranceId == id) onError("The voice stopped unexpectedly")
-            }
-
-            override fun onError(utteranceId: String?, errorCode: Int) {
-                if (utteranceId != id) return
-                onError(
-                    when (errorCode) {
-                        TextToSpeech.ERROR_NETWORK,
-                        TextToSpeech.ERROR_NETWORK_TIMEOUT ->
-                            "That voice needs the internet. Pick an offline " +
-                                "voice in the read-aloud settings."
-                        TextToSpeech.ERROR_NOT_INSTALLED_YET ->
-                            "The voice data is still downloading"
-                        TextToSpeech.ERROR_SYNTHESIS ->
-                            "The engine could not read that passage"
-                        else -> "The voice stopped unexpectedly"
-                    }
-                )
-            }
-
-            // The reason this whole design uses the platform API: the engine
-            // tells us which characters it is saying, so the page can
-            // highlight them. Not every engine implements it, which is why
-            // the caller falls back to highlighting the whole sentence.
-            override fun onRangeStart(
-                utteranceId: String?,
-                start: Int,
-                end: Int,
-                frame: Int
-            ) {
-                if (utteranceId == id) onRange(start, end)
-            }
-        })
 
         val params = Bundle().apply {
             putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
         }
 
-        val spoken = Utterances.forSpeech(utterance.text)
-        val result = engine.speak(spoken, TextToSpeech.QUEUE_FLUSH, params, id)
-        if (result == TextToSpeech.ERROR) {
-            onError("The engine refused that passage")
+        val mode = if (flush) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
+        val result = engine.speak(Utterances.forSpeech(text), mode, params, id)
+        return result != TextToSpeech.ERROR
+    }
+
+    override fun engines(): List<EngineOption> {
+        val engine = tts ?: return emptyList()
+        return runCatching {
+            engine.engines.orEmpty().map { EngineOption(it.name, it.label) }
+        }.getOrDefault(emptyList())
+    }
+
+    override fun preview(text: String, voiceId: String?, speed: Float, pitch: Float) {
+        val engine = tts ?: return
+        if (!ready) return
+
+        // Apply directly rather than through enqueue(): a preview must be
+        // audible at the CURRENT settings even if they match what is already
+        // applied, and it always interrupts.
+        engine.setSpeechRate(speed)
+        engine.setPitch(pitch)
+        appliedSpeed = speed
+        appliedPitch = pitch
+
+        voiceId?.let { wanted ->
+            engine.voices?.firstOrNull { it.name == wanted }?.let { engine.voice = it }
         }
+
+        engine.speak(text, TextToSpeech.QUEUE_FLUSH, Bundle(), PREVIEW_ID)
     }
 
     override fun stop() {
@@ -211,6 +297,7 @@ class SystemSpeechEngine(private val context: Context) : SpeechEngine {
         runCatching { tts?.stop() }
         runCatching { tts?.shutdown() }
         tts = null
+        listener = null
         ready = false
     }
 
@@ -221,8 +308,8 @@ class SystemSpeechEngine(private val context: Context) : SpeechEngine {
         return all
             .asSequence()
             .filter { it.locale.language == locale.language }
-            // A voice the engine has not downloaded yet will fail at the
-            // moment you press play, which is the worst time to find out.
+            // A voice the engine has not downloaded yet fails at the moment
+            // you press play, which is the worst time to find out.
             .filterNot { it.features?.contains(FEATURE_NOT_INSTALLED) == true }
             .map { v ->
                 VoiceOption(
@@ -233,10 +320,14 @@ class SystemSpeechEngine(private val context: Context) : SpeechEngine {
                     quality = v.quality
                 )
             }
-            // Offline first, then by quality. An offline voice that works on
-            // a plane beats a marginally nicer one that needs a signal.
-            .sortedWith(compareByDescending<VoiceOption> { it.offline }
-                .thenByDescending { it.quality })
+            // Quality first, then offline. Google's best voices are network
+            // ones, and on a slow phone they are both better AND faster than
+            // anything local - so burying them under offline voices would
+            // hide the best option this device has.
+            .sortedWith(
+                compareByDescending<VoiceOption> { it.quality }
+                    .thenByDescending { it.offline }
+            )
             .toList()
     }
 
@@ -264,19 +355,3 @@ class SystemSpeechEngine(private val context: Context) : SpeechEngine {
         const val FEATURE_NOT_INSTALLED = "notInstalled"
     }
 }
-
-/** Engines installed on this device, for the picker. */
-fun installedEngines(context: Context): List<Pair<String, String>> {
-    val probe = TextToSpeech(context.applicationContext) {}
-    return try {
-        probe.engines.orEmpty().map { it.name to it.label }
-    } catch (_: Throwable) {
-        emptyList()
-    } finally {
-        runCatching { probe.shutdown() }
-    }
-}
-
-/** Build.VERSION guard kept in one place. */
-internal val supportsRangeStart: Boolean
-    get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O

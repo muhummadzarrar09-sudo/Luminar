@@ -50,6 +50,7 @@ class SettingsRepository(private val context: Context) {
         val ttsPitch = floatPreferencesKey("tts_pitch")
         val ttsVoice = stringPreferencesKey("tts_voice")
         val ttsSleep = intPreferencesKey("tts_sleep_minutes")
+        val ttsEngine = stringPreferencesKey("tts_engine_package")
     }
 
     val settings: Flow<ReaderSettings> = context.settingsStore.data
@@ -87,7 +88,8 @@ class SettingsRepository(private val context: Context) {
                 ttsPitch = (prefs[Keys.ttsPitch] ?: 1.0f)
                     .coerceIn(ReaderSettings.MIN_TTS_PITCH, ReaderSettings.MAX_TTS_PITCH),
                 ttsVoiceId = prefs[Keys.ttsVoice],
-                ttsSleepMinutes = (prefs[Keys.ttsSleep] ?: 0).coerceIn(0, 120)
+                ttsSleepMinutes = (prefs[Keys.ttsSleep] ?: 0).coerceIn(0, 120),
+                ttsEnginePackage = prefs[Keys.ttsEngine]
             )
         }
 
@@ -154,6 +156,14 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setTtsSleepMinutes(minutes: Int) = edit {
         it[Keys.ttsSleep] = minutes.coerceIn(0, 120)
+    }
+
+    suspend fun setTtsEngine(packageName: String?) = edit {
+        if (packageName == null) {
+            it.remove(Keys.ttsEngine)
+        } else {
+            it[Keys.ttsEngine] = packageName
+        }
     }
 
     private suspend fun edit(block: (MutablePreferences) -> Unit) {

@@ -312,6 +312,7 @@ fun ReaderScreen(
         ReaderSheet.READ_ALOUD -> {
             val speaking by vm.speaking.collectAsStateWithLifecycle()
             val voices by vm.voices.collectAsStateWithLifecycle()
+            val engines by vm.engines.collectAsStateWithLifecycle()
             val sleepLeft by vm.sleepRemaining.collectAsStateWithLifecycle()
             val speechError by vm.speechError.collectAsStateWithLifecycle()
             val readerSettings by vm.settings.collectAsStateWithLifecycle()
@@ -320,6 +321,8 @@ fun ReaderScreen(
                 speaking = speaking,
                 settings = readerSettings,
                 voices = voices,
+                engines = engines,
+                currentEngine = readerSettings.ttsEnginePackage,
                 sleepRemaining = sleepLeft,
                 error = speechError,
                 onToggle = vm::toggleSpeaking,
@@ -327,6 +330,8 @@ fun ReaderScreen(
                 onSpeed = vm::setTtsSpeed,
                 onPitch = vm::setTtsPitch,
                 onVoice = vm::setTtsVoice,
+                onEngine = vm::setTtsEngine,
+                onPreview = vm::previewVoice,
                 onSleep = vm::applySleepTimer,
                 onDismissError = vm::dismissSpeechError,
                 // Dismissing the sheet leaves the voice running on purpose:

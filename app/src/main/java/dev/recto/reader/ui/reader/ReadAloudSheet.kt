@@ -37,6 +37,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.recto.reader.data.ReaderSettings
+import dev.recto.reader.data.tts.EngineOption
 import dev.recto.reader.data.tts.VoiceOption
 
 /**
@@ -52,6 +53,8 @@ fun ReadAloudSheet(
     speaking: Boolean,
     settings: ReaderSettings,
     voices: List<VoiceOption>,
+    engines: List<EngineOption>,
+    currentEngine: String?,
     sleepRemaining: Int?,
     error: String?,
     onToggle: () -> Unit,
@@ -59,6 +62,8 @@ fun ReadAloudSheet(
     onSpeed: (Float) -> Unit,
     onPitch: (Float) -> Unit,
     onVoice: (String?) -> Unit,
+    onEngine: (String?) -> Unit,
+    onPreview: (String?) -> Unit,
     onSleep: (Int) -> Unit,
     onDismissError: () -> Unit,
     onDismiss: () -> Unit
@@ -82,10 +87,8 @@ fun ReadAloudSheet(
             Spacer(Modifier.height(4.dp))
 
             Text(
-                text = "Uses whichever text-to-speech engine Android is set " +
-                    "to. For neural voices that work offline, install the " +
-                    "sherpa-onnx Piper engine and pick it in Android " +
-                    "settings under Accessibility.",
+                text = "Tap a voice to hear a sample before you commit to a " +
+                    "chapter of it.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -209,6 +212,33 @@ fun ReadAloudSheet(
                 }
             }
 
+            if (engines.size > 1) {
+                Spacer(Modifier.height(20.dp))
+                SectionCaption("Engine")
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    engines.forEach { engine ->
+                        FilterChip(
+                            selected = engine.packageName == currentEngine,
+                            onClick = { onEngine(engine.packageName) },
+                            label = { Text(engine.label) }
+                        )
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "Switching engine reloads its voices. Google's " +
+                        "best voices need the internet but are quick and " +
+                        "highlight word by word; local engines work offline " +
+                        "and highlight a sentence at a time.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
             Spacer(Modifier.height(20.dp))
 
             SectionCaption("Voice")
@@ -235,7 +265,8 @@ fun ReadAloudSheet(
                         VoiceRow(
                             voice = voice,
                             selected = voice.id == settings.ttsVoiceId,
-                            onClick = { onVoice(voice.id) }
+                            onClick = { onVoice(voice.id) },
+                            onPreview = { onPreview(voice.id) }
                         )
                     }
                 }
@@ -261,7 +292,8 @@ fun ReadAloudSheet(
 private fun VoiceRow(
     voice: VoiceOption,
     selected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onPreview: () -> Unit
 ) {
     // Plain Surface plus Modifier.clickable, not the Surface(onClick = ..)
     // overload - that one is ExperimentalMaterial3Api and would need an
@@ -302,6 +334,11 @@ private fun VoiceRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+            // Preview is its own target, so tapping the row selects and
+            // tapping the speaker auditions - picking a voice you have not
+            // heard is the thing this whole screen exists to avoid.
+            TextButton(onClick = onPreview) { Text("Hear it") }
+
             if (selected) {
                 Text("\u2713", style = MaterialTheme.typography.titleMedium)
             }

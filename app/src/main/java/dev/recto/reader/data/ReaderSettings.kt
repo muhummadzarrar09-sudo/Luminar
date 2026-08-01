@@ -203,7 +203,16 @@ data class ReaderSettings(
     val ttsVoiceId: String? = null,
 
     /** Minutes for the sleep timer, 0 for off. Remembered between sessions. */
-    val ttsSleepMinutes: Int = 0
+    val ttsSleepMinutes: Int = 0,
+
+    /**
+     * TTS engine package, or null for whatever Android is set to.
+     *
+     * Recto keeps its own choice so read-aloud can use a different engine
+     * from the rest of the system - you might want Google's voice for books
+     * and a local one for TalkBack.
+     */
+    val ttsEnginePackage: String? = null
 ) {
     companion object {
         const val MIN_FONT_SP = 12

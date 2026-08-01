@@ -1,12 +1,37 @@
 # Read aloud
 
-## Getting the good voices
+## Picking an engine
 
-Recto speaks through whichever text-to-speech engine Android is set to use.
-Out of the box that is usually Google's, which is fine but not what you are
-here for.
+Recto has its own engine picker now - **Read aloud -> Engine**. It does not
+change what the rest of Android uses, so you can have Google read your books
+and something else drive TalkBack.
 
-For genuinely high-fidelity, fully offline neural voices:
+Tap **Hear it** on any voice to audition it before committing to a chapter.
+
+### Which engine to use
+
+There is a real trade-off and it depends on your phone.
+
+| | Google | Local (sherpa-onnx) |
+|---|---|---|
+| Quality | Excellent (best voices are server-side) | Good, but depends on the model |
+| Speed | Fast on any phone | Depends entirely on your CPU |
+| Offline | Only the downloaded voices | Always |
+| Highlighting | Word by word | Whole sentence |
+
+**On a budget chip, Google wins outright.** Neural TTS is CPU-bound: on a
+MediaTek Helio G81 or similar, Kokoro needs 2-3 minutes of compute per
+minute of audio - it literally cannot keep up with listening. Piper medium
+is roughly 12x faster than Kokoro but still works the CPU hard.
+
+Google does the synthesis on a server, so a slow phone costs nothing, and
+its engine reports word timings that local engines do not.
+
+**On a flagship, local is genuinely competitive** and never needs a signal.
+
+## Installing a local engine
+
+For fully offline neural voices:
 
 1. Download a **sherpa-onnx TTS engine APK** from
    <https://k2-fsa.github.io/sherpa/onnx/tts/apk-engine.html>
@@ -15,12 +40,14 @@ For genuinely high-fidelity, fully offline neural voices:
    `arm64-v8a`) and a voice you like. A good English starting point is
    `...-en-tts-engine-vits-piper-en_US-libritts_r-medium.apk`.
 
-2. Install it and open it once.
+2. Install it and **open it once** - it unpacks its model on first launch,
+   and skipping this crashes Android's TTS settings.
 
-3. Android **Settings -> Accessibility -> Text-to-speech output**, and set
-   it as the preferred engine.
+3. In Recto: **menu -> Read aloud -> Engine**, and pick it there. No need to
+   change the system default any more.
 
-4. In Recto: **menu (three dots) -> Read aloud**, and pick the voice.
+Note: all the sherpa APKs share one package name, so installing a second
+voice **replaces** the first.
 
 Those are real Piper neural voices running on the phone's CPU. No network,
 no account, nothing leaves the device.
@@ -68,6 +95,30 @@ Sentence splitting, highlighting, page turns, the notification, the sleep
 timer and the speed controls all sit above that interface and would not
 change. A bundled engine would implement `SpeechEngine` and nothing else
 would move.
+
+## The gap bug
+
+Worth recording, because it made every engine sound far worse than it is.
+
+The first version spoke ONE sentence, waited for `onDone`, then synthesised
+the next. That leaves a dead gap after every full stop while the model
+generates the next chunk - a few hundred milliseconds on a fast phone, much
+worse on a budget one. Continuous prose came out as a stilted list of
+sentences, and it was easy to blame the voice.
+
+The fix is to keep three utterances queued with `QUEUE_ADD`, so the engine
+synthesises ahead while the current sentence plays. `QUEUE_FLUSH` - what the
+first version used for every sentence - wipes the queue each time, which
+guarantees the engine can never work ahead.
+
+Two consequences worth knowing:
+
+- **Highlighting and page turns hang off `onStart`, not off enqueueing.**
+  The queue runs up to three sentences ahead of the audio, so doing it at
+  enqueue time would turn the page early and highlight the wrong line.
+- **Skip and speed changes re-point at the SOUNDING sentence**, not the
+  queued one, and flush. Otherwise skipping forward once would jump four
+  sentences.
 
 ## How it works
 
