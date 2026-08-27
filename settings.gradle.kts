@@ -1,10 +1,8 @@
-// settings.gradle.kts
 pluginManagement {
     repositories {
         google()
         mavenCentral()
         gradlePluginPortal()
-        maven("https://jitpack.io")
     }
 }
 
@@ -13,9 +11,13 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        maven("https://jitpack.io")
     }
 }
 
-rootProject.name = "Luminar Reader"
+rootProject.name = "Recto"
+
+// Phase 0 is deliberately a single module. Once this compiles green on your
+// machine we split into :core:* and :feature:* as planned in BRAINSTORM.md
+// section 4.2. Getting a verified baseline first is worth more than a tidy
+// module graph that has never built.
 include(":app")

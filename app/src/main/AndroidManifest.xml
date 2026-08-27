@@ -1,71 +1,175 @@
+<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!--
+        Dictionary and Wikipedia lookups. Nothing else in Recto uses the
+        network: books are never uploaded, and there is no telemetry.
+    -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!--
+        Reading reminders. POST_NOTIFICATIONS is requested at runtime on
+        Android 13+, and only when the user actually turns reminders on.
+
+        Deliberately NOT declared: SCHEDULE_EXACT_ALARM or USE_EXACT_ALARM.
+        Exact alarms are denied by default from Android 14 and Play restricts
+        USE_EXACT_ALARM to alarm-clock and calendar apps. A reading nudge that
+        lands at 20:07 instead of 20:00 is fine, so inexact alarms are both
+        correct and permission-free.
+    -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!--
+        Read aloud with the screen off. Android 14 requires BOTH the generic
+        FOREGROUND_SERVICE permission and the type-specific one, plus a
+        matching foregroundServiceType on the service and the same constant
+        passed to startForeground. Miss any of the four and it throws rather
+        than degrading.
+
+        mediaPlayback is the correct type: it is user-initiated audio with
+        transport controls, which is exactly what the type is for.
+    -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 
+    <!--
+        Lets Recto see which text-to-speech engines are installed so it can
+        list their voices. Android 11+ hides other packages by default, and
+        without this the voice picker is empty on a device that has perfectly
+        good engines installed.
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
     <application
-        android:name=".LuminarApp"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
-        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Luminar"
-        android:usesCleartextTraffic="true">
+        android:theme="@style/Theme.Recto">
 
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:windowSoftInputMode="adjustResize">
+            android:label="@string/app_name"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|density|fontScale"
+            android:theme="@style/Theme.Recto">
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <intent-filter>
+            <!--
+                "Open with Recto" from a file manager, a download notification,
+                or a chat app's attachment preview.
+
+                Matching ebook files is awkward: many providers report
+                application/octet-stream for anything they do not recognise,
+                and WhatsApp is one of them. So we match three ways:
+                  1. by MIME type, when the provider is honest
+                  2. by file extension on content:// URIs, for when it is not
+                  3. by file:// and http(s) for downloads and file managers
+
+                An intent-filter needs scheme + host + pathPattern together to
+                match on extension, hence the separate blocks.
+            -->
+
+            <!-- 1. Honest MIME types. -->
+            <intent-filter android:priority="1">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="application/pdf" />
-            </intent-filter>
-
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="application/epub+zip" />
+                <data android:mimeType="application/x-epub+zip" />
+                <data android:mimeType="application/epub" />
                 <data android:mimeType="application/pdf" />
             </intent-filter>
 
-            <intent-filter>
+            <!-- 2. Generic MIME plus an .epub path, for providers that shrug. -->
+            <intent-filter android:priority="1">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="text/*" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="application/zip" />
+
+                <data android:host="*" />
+                <data android:pathPattern=".*\\.epub" />
+                <data android:pathPattern=".*\\..*\\.epub" />
+                <data android:pathPattern=".*\\..*\\..*\\.epub" />
+                <data android:pathPattern=".*\\.pdf" />
+                <data android:pathPattern=".*\\..*\\.pdf" />
             </intent-filter>
 
-            <intent-filter>
+            <!-- 3. No MIME type at all, just a path. File managers do this. -->
+            <intent-filter android:priority="1">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="application/json" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data android:scheme="file" />
+                <data android:scheme="content" />
+                <data android:host="*" />
+                <data android:pathPattern=".*\\.epub" />
+                <data android:pathPattern=".*\\..*\\.epub" />
             </intent-filter>
 
+            <!-- Share sheet: "Share -> Recto" from WhatsApp, Gmail, Drive. -->
             <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
+                <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="application/epub+zip" />
+                <data android:mimeType="application/x-epub+zip" />
+                <data android:mimeType="application/pdf" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
+
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/epub+zip" />
+                <data android:mimeType="application/x-epub+zip" />
             </intent-filter>
 
         </activity>
 
-        <activity
-            android:name=".CrashViewActivity"
-            android:exported="false"
-            android:label="Luminar Crash Log"
-            android:theme="@android:style/Theme.Material.Light.NoActionBar" />
 
-        <service
-            android:name=".presentation.reader.TtsService"
-            android:foregroundServiceType="mediaPlayback"
+        <receiver
+            android:name=".notifications.ReminderReceiver"
             android:exported="false" />
+
+        <receiver
+            android:name=".notifications.BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+
+        <!--
+            Keeps read-aloud running with the screen off and puts transport
+            controls on the lock screen. Not exported: nothing outside Recto
+            has any business starting it.
+        -->
+        <service
+            android:name=".tts.ReadAloudService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
 
     </application>
 

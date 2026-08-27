@@ -1,21 +1,13 @@
-# ---------------------------------------------------------------------------
 # Gradle
-# ---------------------------------------------------------------------------
 .gradle/
 build/
-**/build/
-gradle-app.setting
 !gradle/wrapper/gradle-wrapper.jar
-!**/src/**/build/
-.gradletasknamecache
+local.properties
 
-# ---------------------------------------------------------------------------
-# Android build outputs
-# ---------------------------------------------------------------------------
+# Android
 *.apk
 *.aab
 *.ap_
-*.aar
 *.dex
 *.class
 bin/
@@ -25,75 +17,39 @@ release/
 captures/
 .externalNativeBuild/
 .cxx/
-app/build/
-app/release/
-
-# ---------------------------------------------------------------------------
-# Local configuration / secrets (machine-specific — never commit)
-# ---------------------------------------------------------------------------
-local.properties
-keystore.properties
-*.jks
 *.keystore
-secrets.properties
+!debug.keystore
+keystore.properties
 google-services.json
 
-# ---------------------------------------------------------------------------
-# Kotlin
-# ---------------------------------------------------------------------------
-.kotlin/
-
-# ---------------------------------------------------------------------------
-# IntelliJ IDEA / Android Studio
-# ---------------------------------------------------------------------------
-*.iml
+# IDE
 .idea/
-.idea/workspace.xml
-.idea/tasks.xml
-.idea/gradle.xml
-.idea/assetWizardSettings.xml
-.idea/dictionaries
-.idea/libraries
-.idea/caches
-.idea/modules.xml
-.idea/navEditor.xml
-.idea/deploymentTargetDropDown.xml
-.navigation/
-misc.xml
+*.iml
 *.ipr
 *.iws
-
-# ---------------------------------------------------------------------------
-# Eclipse
-# ---------------------------------------------------------------------------
-.classpath
-.project
+.navigation/
 .settings/
-.metadata/
+.project
+.classpath
 
-# ---------------------------------------------------------------------------
-# Logs / profiling / crash reports
-# ---------------------------------------------------------------------------
-*.log
-hs_err_pid*
-replay_pid*
-
-# ---------------------------------------------------------------------------
-# OS-generated files
-# ---------------------------------------------------------------------------
+# OS
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
 Thumbs.db
-desktop.ini
 
-# ---------------------------------------------------------------------------
-# Editor backups / temp
-# ---------------------------------------------------------------------------
-*~
-*.swp
-*.bak
+# Logs & temp
+*.log
+*.hprof
 *.tmp
+
+# Sample books used for local testing — never commit copyrighted files
+/sample-books/
+/test-corpus/
+
+# Machine-specific script output. No leading slash, so it matches wherever
+# the script is run from - the doctor writes the report next to itself.
+doctor-report.txt
+
+# Windows Explorer folder settings. Created silently when you customise a
+# folder's view or icon; there is no reason for it to be in a git repo.
+desktop.ini
+Desktop.ini
